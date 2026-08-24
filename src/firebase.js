@@ -1,9 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore } from "firebase/firestore";
 
-// Ces valeurs viennent de la console Firebase (Paramètres du projet > Vos applications > Config).
-// Elles ne sont PAS secrètes : ce sont des identifiants publics côté client, la vraie protection
-// des données se fait via les règles de sécurité Firestore (voir firestore.rules).
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -14,16 +11,4 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-// Attention : la base de données Firestore de ce projet a été créée avec l'identifiant
-// "oiseau-traiteur" plutôt que "(default)" — il faut donc le préciser explicitement ici,
-// sinon Firestore cherche une base "(default)" qui n'existe pas dans ce projet.
-//
-// "experimentalForceLongPolling" : la connexion "streaming" par défaut de Firestore est
-// souvent bloquée par les réseaux d'entreprise stricts (pare-feu, proxy) — ce qui provoque
-// l'erreur "client is offline" même quand internet fonctionne normalement par ailleurs.
-// Cette option force une connexion plus simple et compatible avec ce type de réseau.
-export const db = initializeFirestore(
-  app,
-  { experimentalForceLongPolling: true },
-  "oiseau-traiteur"
-);
+export const db = initializeFirestore(app, { experimentalForceLongPolling: true });
