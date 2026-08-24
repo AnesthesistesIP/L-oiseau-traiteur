@@ -14,4 +14,7 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+// Attention : la base de données Firestore de ce projet a été créée avec l'identifiant
+// "oiseau-traiteur" plutôt que "(default)" — il faut donc le préciser explicitement ici,
+// sinon Firestore cherche une base "(default)" qui n'existe pas dans ce projet.
+export const db = getFirestore(app, "oiseau-traiteur");
