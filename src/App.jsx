@@ -112,6 +112,7 @@ export default function LOiseauTraiteur() {
         const names = await api.getDoctors();
         setDoctors(names);
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         setGlobalError("Impossible de charger la liste des médecins. Vérifiez votre connexion.");
       }
       setDoctorsLoaded(true);
@@ -120,6 +121,7 @@ export default function LOiseauTraiteur() {
       try {
         recurringDefaultsRef.current = await api.getRecurringDefaults();
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         recurringDefaultsRef.current = {};
       }
     })();
@@ -134,6 +136,7 @@ export default function LOiseauTraiteur() {
           boisson: String(next.boisson ?? ""),
         });
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         /* garde les valeurs par défaut */
       }
     })();
@@ -152,6 +155,7 @@ export default function LOiseauTraiteur() {
         return filtered.length ? filtered[0].date : "";
       });
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setMenus([]);
       setGlobalError("Impossible de charger les menus. Vérifiez votre connexion.");
     }
@@ -174,6 +178,7 @@ export default function LOiseauTraiteur() {
       try {
         await api.saveDoctors(updated);
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         setDoctorError(
           "Votre nom est affiché, mais la sauvegarde a échoué : il risque de disparaître si la page se recharge. Réessayez."
         );
@@ -195,6 +200,7 @@ export default function LOiseauTraiteur() {
         if (cancelled) return;
         setMyOrder(data ? { selections: data.selections, total: data.total } : null);
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         if (!cancelled) setMyOrder(null);
       }
     }
@@ -223,6 +229,7 @@ export default function LOiseauTraiteur() {
         await api.saveOrder(selectedOrderDate, selectedDoctor, newSelections, total);
       }
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setOrderSyncError("Votre choix est affiché, mais la sauvegarde a peut-être échoué. Réessayez si besoin.");
     }
     setBusyCat("");
@@ -235,6 +242,7 @@ export default function LOiseauTraiteur() {
     try {
       await api.deleteOrder(selectedOrderDate, selectedDoctor);
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setOrderSyncError("L'annulation est affichée, mais n'a peut-être pas été enregistrée.");
     }
   }
@@ -247,6 +255,7 @@ export default function LOiseauTraiteur() {
       try {
         menuData = await api.getMenu(traiteurDate);
       } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
         /* pas de menu existant ou erreur réseau : on repart d'un formulaire vide */
       }
       if (menuData) {
@@ -306,6 +315,7 @@ export default function LOiseauTraiteur() {
     try {
       await api.saveMenu(traiteurDate, cleaned);
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       // on ne recharge pas les menus et on ne touche pas au formulaire : vos plats saisis restent
       // affichés pour que vous puissiez cliquer à nouveau sur "Enregistrer" sans tout retaper.
       setTraiteurStatus("save-error");
@@ -347,6 +357,7 @@ export default function LOiseauTraiteur() {
       await api.saveCategoryPrices(cleaned);
       setPriceStatus("saved");
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setPriceStatus("save-error");
     }
     setTimeout(() => setPriceStatus(""), 2000);
@@ -380,6 +391,7 @@ export default function LOiseauTraiteur() {
       });
       setDayOrders(rows.sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")));
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setDayOrders([]);
     }
     setDayOrdersLoading(false);
@@ -420,6 +432,7 @@ export default function LOiseauTraiteur() {
       });
       setSummaryRows(rows);
     } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
       setSummaryError("Impossible de charger le résumé pour ce mois.");
       setSummaryRows([]);
     }
