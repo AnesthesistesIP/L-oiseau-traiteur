@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// Règles volontairement simples : l'appli n'a pas de système de compte/mot de passe
+// (les médecins choisissent juste leur nom dans une liste), donc on ne peut pas distinguer
+// "un médecin de l'équipe" d'un inconnu qui tomberait sur l'URL du site.
+//
+// Sécurité réelle ici = obscurité de l'URL du site (pas indexée, pas devinable) + le fait que
+// la config Firebase ci-dessous ne donne accès qu'à CE projet précis, pas à d'autres données.
+//
+// Si un jour vous voulez une vraie protection (ex: un code d'accès partagé), il faudra ajouter
+// une étape d'authentification (Firebase Auth, même simple/anonyme) et adapter ces règles.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /meta/{docId} {
+      allow read, write: if true;
+    }
+    match /menus/{docId} {
+      allow read, write: if true;
+    }
+    match /orders/{docId} {
+      allow read, write: if true;
+    }
+    // Tout le reste est bloqué par défaut.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
