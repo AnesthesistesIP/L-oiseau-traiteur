@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore } from "firebase/firestore";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,4 +11,4 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+export const db = getFirestore(app);
