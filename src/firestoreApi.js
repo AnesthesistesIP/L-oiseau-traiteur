@@ -7,7 +7,7 @@ import {
   query,
   where,
   getDocs,
-} from "firebase/firestore";
+} from "firebase/firestore/lite";
 import { db } from "./firebase.js";
 
 // ---------- médecins ----------
