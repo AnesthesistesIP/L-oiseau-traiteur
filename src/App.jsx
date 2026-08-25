@@ -82,6 +82,8 @@ export default function LOiseauTraiteur() {
   const [myOrder, setMyOrder] = useState(null); // undefined = loading, null = none, {selections,total}
   const [busyCat, setBusyCat] = useState("");
   const [orderSyncError, setOrderSyncError] = useState("");
+  // quantité choisie par catégorie (1 par défaut), utilisée au moment de sélectionner un plat
+  const [categoryQty, setCategoryQty] = useState({ entree: 1, plat: 1, dessert: 1, boisson: 1 });
 
   // traiteur tab
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
@@ -198,7 +200,18 @@ export default function LOiseauTraiteur() {
       try {
         const data = await api.getOrder(selectedOrderDate, selectedDoctor);
         if (cancelled) return;
-        setMyOrder(data ? { selections: data.selections, total: data.total } : null);
+        const order = data ? { selections: data.selections, total: data.total } : null;
+        setMyOrder(order);
+        // reprend les quantités déjà enregistrées (ou 1 par défaut) dans les sélecteurs
+        const nextQty = { entree: 1, plat: 1, dessert: 1, boisson: 1 };
+        if (order && order.selections) {
+          CATEGORIES.forEach((c) => {
+            if (order.selections[c.key] && order.selections[c.key].qty) {
+              nextQty[c.key] = order.selections[c.key].qty;
+            }
+          });
+        }
+        setCategoryQty(nextQty);
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
         if (!cancelled) setMyOrder(null);
@@ -210,18 +223,18 @@ export default function LOiseauTraiteur() {
     };
   }, [selectedDoctor, selectedOrderDate]);
 
-  async function toggleSelection(catKey, item) {
-    if (!selectedDoctor || !selectedOrderDate) return;
-    setOrderSyncError("");
-    const current = (myOrder && myOrder.selections) || {};
-    const isSame = current[catKey] && current[catKey].id === item.id;
-    const price = categoryPricesRef.current[catKey] || 0;
-    const newSelections = { ...current, [catKey]: isSame ? null : { id: item.id, name: item.name, price } };
-    const total = CATEGORIES.reduce((s, c) => s + (newSelections[c.key] ? newSelections[c.key].price : 0), 0);
+  function computeTotal(selections) {
+    return CATEGORIES.reduce((s, c) => {
+      const sel = selections[c.key];
+      return s + (sel ? sel.price * (sel.qty || 1) : 0);
+    }, 0);
+  }
+
+  async function saveSelections(newSelections) {
+    const total = computeTotal(newSelections);
     const hasAny = CATEGORIES.some((c) => newSelections[c.key]);
     // affichage immédiat, la sauvegarde se fait ensuite
     setMyOrder(hasAny ? { selections: newSelections, total } : null);
-    setBusyCat(catKey);
     try {
       if (!hasAny) {
         await api.deleteOrder(selectedOrderDate, selectedDoctor);
@@ -229,9 +242,37 @@ export default function LOiseauTraiteur() {
         await api.saveOrder(selectedOrderDate, selectedDoctor, newSelections, total);
       }
     } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
+      console.error("[L'Oiseau Traiteur] erreur:", e);
       setOrderSyncError("Votre choix est affiché, mais la sauvegarde a peut-être échoué. Réessayez si besoin.");
     }
+  }
+
+  async function toggleSelection(catKey, item) {
+    if (!selectedDoctor || !selectedOrderDate) return;
+    setOrderSyncError("");
+    const current = (myOrder && myOrder.selections) || {};
+    const isSame = current[catKey] && current[catKey].id === item.id;
+    const price = categoryPricesRef.current[catKey] || 0;
+    const qty = categoryQty[catKey] || 1;
+    const newSelections = {
+      ...current,
+      [catKey]: isSame ? null : { id: item.id, name: item.name, price, qty },
+    };
+    setBusyCat(catKey);
+    await saveSelections(newSelections);
+    setBusyCat("");
+  }
+
+  // Change la quantité pour une catégorie : met à jour le sélecteur, et si un plat est déjà
+  // choisi dans cette catégorie, répercute aussitôt la nouvelle quantité sur la commande.
+  async function updateQty(catKey, qty) {
+    setCategoryQty((prev) => ({ ...prev, [catKey]: qty }));
+    const current = (myOrder && myOrder.selections) || {};
+    if (!current[catKey]) return; // rien de sélectionné dans cette catégorie, rien à mettre à jour
+    setOrderSyncError("");
+    const newSelections = { ...current, [catKey]: { ...current[catKey], qty } };
+    setBusyCat(catKey);
+    await saveSelections(newSelections);
     setBusyCat("");
   }
 
@@ -239,6 +280,7 @@ export default function LOiseauTraiteur() {
     if (!selectedDoctor || !selectedOrderDate) return;
     setOrderSyncError("");
     setMyOrder(null);
+    setCategoryQty({ entree: 1, plat: 1, dessert: 1, boisson: 1 });
     try {
       await api.deleteOrder(selectedOrderDate, selectedDoctor);
     } catch (e) {
@@ -386,6 +428,7 @@ export default function LOiseauTraiteur() {
           category: c.key,
           name: selections[c.key].name,
           price: Number(selections[c.key].price) || 0,
+          qty: Number(selections[c.key].qty) || 1,
         }));
         return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
       });
@@ -403,7 +446,7 @@ export default function LOiseauTraiteur() {
     dayOrders.forEach((o) => {
       o.items.forEach((it) => {
         const m = map[it.category];
-        m.set(it.name, (m.get(it.name) || 0) + 1);
+        m.set(it.name, (m.get(it.name) || 0) + it.qty);
       });
     });
     return map;
@@ -427,6 +470,7 @@ export default function LOiseauTraiteur() {
           category: c.key,
           name: selections[c.key].name,
           price: Number(selections[c.key].price) || 0,
+          qty: Number(selections[c.key].qty) || 1,
         }));
         return { date: parsed.date, doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
       });
@@ -448,7 +492,7 @@ export default function LOiseauTraiteur() {
       const g = map.get(r.doctor);
       g.total += r.total;
       r.items.forEach((it) => {
-        g.counts[it.category] = (g.counts[it.category] || 0) + 1;
+        g.counts[it.category] = (g.counts[it.category] || 0) + (it.qty || 1);
       });
     });
     return Array.from(map.values()).sort((a, b) => a.doctor.localeCompare(b.doctor, "fr"));
@@ -465,7 +509,8 @@ export default function LOiseauTraiteur() {
     return items
       .map((it) => {
         const s = categorySingular(it.category);
-        return `${s.charAt(0).toUpperCase()}${s.slice(1)}: ${it.name}`;
+        const label = `${s.charAt(0).toUpperCase()}${s.slice(1)}: ${it.name}`;
+        return it.qty > 1 ? `${label} ×${it.qty}` : label;
       })
       .join(" / ");
   }
@@ -503,7 +548,10 @@ export default function LOiseauTraiteur() {
   const orderSummaryText =
     myOrder && myOrder.selections
       ? CATEGORIES.filter((c) => myOrder.selections[c.key])
-          .map((c) => myOrder.selections[c.key].name)
+          .map((c) => {
+            const sel = myOrder.selections[c.key];
+            return sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name;
+          })
           .join(" · ")
       : "";
 
@@ -605,6 +653,14 @@ export default function LOiseauTraiteur() {
           color: var(--pine-dark);
         }
         .lf-catprice { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-soft); font-weight: 500; }
+        .lf-catheader-order { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .lf-catheader-order h3 { margin: 0; }
+        .lf-qty-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+        .lf-qty-picker select {
+          font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; color: var(--ink);
+          border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; background: var(--paper);
+        }
+        .lf-dish-qty-badge { color: var(--pine); font-weight: 700; }
         .lf-catheader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
         .lf-recurring-hint {
           font-size: 11.5px; color: var(--ink-soft); background: var(--blush-light);
@@ -777,9 +833,24 @@ export default function LOiseauTraiteur() {
 
                     {activeCategories.map((cat) => (
                       <div className="lf-catsection" key={cat.key}>
-                        <h3>
-                          {cat.label} <span className="lf-catprice">{formatEuro(categoryPricesRef.current[cat.key])}</span>
-                        </h3>
+                        <div className="lf-catheader-order">
+                          <h3>
+                            {cat.label} <span className="lf-catprice">{formatEuro(categoryPricesRef.current[cat.key])}</span>
+                          </h3>
+                          <label className="lf-qty-picker">
+                            Quantité
+                            <select
+                              value={categoryQty[cat.key]}
+                              onChange={(e) => updateQty(cat.key, Number(e.target.value))}
+                            >
+                              {[1, 2, 3, 4].map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                         <div className="lf-dishes">
                           {currentMenu.categories[cat.key].map((dish) => {
                             const isSelected =
@@ -800,6 +871,9 @@ export default function LOiseauTraiteur() {
                                 )}
                                 <div className="lf-dish-name" style={{ marginBottom: 0 }}>
                                   {dish.name}
+                                  {isSelected && myOrder.selections[cat.key].qty > 1 && (
+                                    <span className="lf-dish-qty-badge"> ×{myOrder.selections[cat.key].qty}</span>
+                                  )}
                                 </div>
                               </div>
                             );
