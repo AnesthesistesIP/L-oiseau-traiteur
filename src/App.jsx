@@ -21,6 +21,13 @@ function categorySingular(key) {
 function emptyCategories() {
   return { entree: [], plat: [], dessert: [], boisson: [] };
 }
+// Une catégorie peut maintenant contenir plusieurs plats choisis (ex: 1 eau + 2 coca).
+// Cette fonction ramène toujours un tableau, y compris pour d'anciennes commandes de test
+// enregistrées avant ce changement (qui stockaient un seul objet par catégorie).
+function selArray(val) {
+  if (!val) return [];
+  return Array.isArray(val) ? val : [val];
+}
 function blankRow() {
   return { id: genId(), name: "" };
 }
@@ -82,8 +89,6 @@ export default function LOiseauTraiteur() {
   const [myOrder, setMyOrder] = useState(null); // undefined = loading, null = none, {selections,total}
   const [busyCat, setBusyCat] = useState("");
   const [orderSyncError, setOrderSyncError] = useState("");
-  // quantité choisie par catégorie (1 par défaut), utilisée au moment de sélectionner un plat
-  const [categoryQty, setCategoryQty] = useState({ entree: 1, plat: 1, dessert: 1, boisson: 1 });
 
   // traiteur tab
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
@@ -200,18 +205,17 @@ export default function LOiseauTraiteur() {
       try {
         const data = await api.getOrder(selectedOrderDate, selectedDoctor);
         if (cancelled) return;
-        const order = data ? { selections: data.selections, total: data.total } : null;
-        setMyOrder(order);
-        // reprend les quantités déjà enregistrées (ou 1 par défaut) dans les sélecteurs
-        const nextQty = { entree: 1, plat: 1, dessert: 1, boisson: 1 };
-        if (order && order.selections) {
-          CATEGORIES.forEach((c) => {
-            if (order.selections[c.key] && order.selections[c.key].qty) {
-              nextQty[c.key] = order.selections[c.key].qty;
-            }
-          });
+        if (!data) {
+          setMyOrder(null);
+          return;
         }
-        setCategoryQty(nextQty);
+        // normalise : d'anciennes commandes de test pouvaient stocker un seul plat par
+        // catégorie plutôt qu'un tableau — selArray() ramène toujours un tableau.
+        const normalized = {};
+        CATEGORIES.forEach((c) => {
+          normalized[c.key] = selArray(data.selections && data.selections[c.key]);
+        });
+        setMyOrder({ selections: normalized, total: data.total });
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
         if (!cancelled) setMyOrder(null);
@@ -225,14 +229,14 @@ export default function LOiseauTraiteur() {
 
   function computeTotal(selections) {
     return CATEGORIES.reduce((s, c) => {
-      const sel = selections[c.key];
-      return s + (sel ? sel.price * (sel.qty || 1) : 0);
+      const arr = selections[c.key] || [];
+      return s + arr.reduce((sub, it) => sub + it.price * (it.qty || 1), 0);
     }, 0);
   }
 
   async function saveSelections(newSelections) {
     const total = computeTotal(newSelections);
-    const hasAny = CATEGORIES.some((c) => newSelections[c.key]);
+    const hasAny = CATEGORIES.some((c) => (newSelections[c.key] || []).length > 0);
     // affichage immédiat, la sauvegarde se fait ensuite
     setMyOrder(hasAny ? { selections: newSelections, total } : null);
     try {
@@ -247,30 +251,32 @@ export default function LOiseauTraiteur() {
     }
   }
 
+  // Ajoute ou retire un plat précis dans sa catégorie (plusieurs plats différents peuvent
+  // désormais coexister dans une même catégorie, ex: 1 eau + 2 coca).
   async function toggleSelection(catKey, item) {
     if (!selectedDoctor || !selectedOrderDate) return;
     setOrderSyncError("");
     const current = (myOrder && myOrder.selections) || {};
-    const isSame = current[catKey] && current[catKey].id === item.id;
+    const arr = current[catKey] || [];
+    const exists = arr.some((x) => x.id === item.id);
     const price = categoryPricesRef.current[catKey] || 0;
-    const qty = categoryQty[catKey] || 1;
-    const newSelections = {
-      ...current,
-      [catKey]: isSame ? null : { id: item.id, name: item.name, price, qty },
-    };
+    const newArr = exists
+      ? arr.filter((x) => x.id !== item.id)
+      : [...arr, { id: item.id, name: item.name, price, qty: 1 }];
+    const newSelections = { ...current, [catKey]: newArr };
     setBusyCat(catKey);
     await saveSelections(newSelections);
     setBusyCat("");
   }
 
-  // Change la quantité pour une catégorie : met à jour le sélecteur, et si un plat est déjà
-  // choisi dans cette catégorie, répercute aussitôt la nouvelle quantité sur la commande.
-  async function updateQty(catKey, qty) {
-    setCategoryQty((prev) => ({ ...prev, [catKey]: qty }));
+  // Change la quantité d'un plat déjà choisi (indépendamment des autres plats de la même catégorie).
+  async function updateItemQty(catKey, itemId, qty) {
+    const safeQty = Math.max(1, Math.min(2, qty));
     const current = (myOrder && myOrder.selections) || {};
-    if (!current[catKey]) return; // rien de sélectionné dans cette catégorie, rien à mettre à jour
+    const arr = current[catKey] || [];
+    const newArr = arr.map((x) => (x.id === itemId ? { ...x, qty: safeQty } : x));
+    const newSelections = { ...current, [catKey]: newArr };
     setOrderSyncError("");
-    const newSelections = { ...current, [catKey]: { ...current[catKey], qty } };
     setBusyCat(catKey);
     await saveSelections(newSelections);
     setBusyCat("");
@@ -280,7 +286,6 @@ export default function LOiseauTraiteur() {
     if (!selectedDoctor || !selectedOrderDate) return;
     setOrderSyncError("");
     setMyOrder(null);
-    setCategoryQty({ entree: 1, plat: 1, dessert: 1, boisson: 1 });
     try {
       await api.deleteOrder(selectedOrderDate, selectedDoctor);
     } catch (e) {
@@ -424,12 +429,14 @@ export default function LOiseauTraiteur() {
       const raw = await api.listOrdersForDate(date);
       const rows = raw.map((parsed) => {
         const selections = parsed.selections || {};
-        const items = CATEGORIES.filter((c) => selections[c.key]).map((c) => ({
-          category: c.key,
-          name: selections[c.key].name,
-          price: Number(selections[c.key].price) || 0,
-          qty: Number(selections[c.key].qty) || 1,
-        }));
+        const items = CATEGORIES.flatMap((c) =>
+          selArray(selections[c.key]).map((it) => ({
+            category: c.key,
+            name: it.name,
+            price: Number(it.price) || 0,
+            qty: Number(it.qty) || 1,
+          }))
+        );
         return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
       });
       setDayOrders(rows.sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")));
@@ -466,12 +473,14 @@ export default function LOiseauTraiteur() {
       const raw = await api.listOrdersForMonth(month);
       const rows = raw.map((parsed) => {
         const selections = parsed.selections || {};
-        const items = CATEGORIES.filter((c) => selections[c.key]).map((c) => ({
-          category: c.key,
-          name: selections[c.key].name,
-          price: Number(selections[c.key].price) || 0,
-          qty: Number(selections[c.key].qty) || 1,
-        }));
+        const items = CATEGORIES.flatMap((c) =>
+          selArray(selections[c.key]).map((it) => ({
+            category: c.key,
+            name: it.name,
+            price: Number(it.price) || 0,
+            qty: Number(it.qty) || 1,
+          }))
+        );
         return { date: parsed.date, doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
       });
       setSummaryRows(rows);
@@ -547,11 +556,8 @@ export default function LOiseauTraiteur() {
   const orderTotal = myOrder && myOrder.total ? myOrder.total : 0;
   const orderSummaryText =
     myOrder && myOrder.selections
-      ? CATEGORIES.filter((c) => myOrder.selections[c.key])
-          .map((c) => {
-            const sel = myOrder.selections[c.key];
-            return sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name;
-          })
+      ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
+          .map((sel) => (sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name))
           .join(" · ")
       : "";
 
@@ -653,14 +659,19 @@ export default function LOiseauTraiteur() {
           color: var(--pine-dark);
         }
         .lf-catprice { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-soft); font-weight: 500; }
-        .lf-catheader-order { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-        .lf-catheader-order h3 { margin: 0; }
-        .lf-qty-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); font-weight: 600; }
-        .lf-qty-picker select {
-          font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; color: var(--ink);
-          border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; background: var(--paper);
+        .lf-dish-stepper {
+          display: flex; align-items: center; gap: 10px; margin-top: 2px;
         }
-        .lf-dish-qty-badge { color: var(--pine); font-weight: 700; }
+        .lf-dish-stepper button {
+          width: 24px; height: 24px; border-radius: 999px; border: 1px solid var(--pine);
+          background: #fff; color: var(--pine-dark); font-weight: 700; font-size: 15px; line-height: 1;
+          cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .lf-dish-stepper button:hover:not(:disabled) { background: var(--pine); color: #fff; }
+        .lf-dish-stepper button:disabled { opacity: .35; cursor: not-allowed; }
+        .lf-dish-stepper span {
+          font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 14px; min-width: 14px; text-align: center;
+        }
         .lf-catheader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
         .lf-recurring-hint {
           font-size: 11.5px; color: var(--ink-soft); background: var(--blush-light);
@@ -833,28 +844,15 @@ export default function LOiseauTraiteur() {
 
                     {activeCategories.map((cat) => (
                       <div className="lf-catsection" key={cat.key}>
-                        <div className="lf-catheader-order">
-                          <h3>
-                            {cat.label} <span className="lf-catprice">{formatEuro(categoryPricesRef.current[cat.key])}</span>
-                          </h3>
-                          <label className="lf-qty-picker">
-                            Quantité
-                            <select
-                              value={categoryQty[cat.key]}
-                              onChange={(e) => updateQty(cat.key, Number(e.target.value))}
-                            >
-                              {[1, 2, 3, 4].map((n) => (
-                                <option key={n} value={n}>
-                                  {n}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
+                        <h3>
+                          {cat.label} <span className="lf-catprice">{formatEuro(categoryPricesRef.current[cat.key])}</span>
+                        </h3>
                         <div className="lf-dishes">
                           {currentMenu.categories[cat.key].map((dish) => {
-                            const isSelected =
-                              myOrder && myOrder.selections && myOrder.selections[cat.key] && myOrder.selections[cat.key].id === dish.id;
+                            const entry = ((myOrder && myOrder.selections && myOrder.selections[cat.key]) || []).find(
+                              (x) => x.id === dish.id
+                            );
+                            const isSelected = !!entry;
                             return (
                               <div
                                 key={dish.id}
@@ -869,12 +867,36 @@ export default function LOiseauTraiteur() {
                                     <Check size={13} />
                                   </span>
                                 )}
-                                <div className="lf-dish-name" style={{ marginBottom: 0 }}>
+                                <div className="lf-dish-name" style={{ marginBottom: isSelected ? 10 : 0 }}>
                                   {dish.name}
-                                  {isSelected && myOrder.selections[cat.key].qty > 1 && (
-                                    <span className="lf-dish-qty-badge"> ×{myOrder.selections[cat.key].qty}</span>
-                                  )}
                                 </div>
+                                {isSelected && (
+                                  <div className="lf-dish-stepper" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        updateItemQty(cat.key, dish.id, entry.qty - 1);
+                                      }}
+                                      disabled={entry.qty <= 1}
+                                      aria-label="Retirer une portion"
+                                    >
+                                      −
+                                    </button>
+                                    <span>{entry.qty}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        updateItemQty(cat.key, dish.id, entry.qty + 1);
+                                      }}
+                                      disabled={entry.qty >= 2}
+                                      aria-label="Ajouter une portion"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
