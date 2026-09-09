@@ -29,7 +29,7 @@ function selArray(val) {
   return Array.isArray(val) ? val : [val];
 }
 function blankRow() {
-  return { id: genId(), name: "" };
+  return { id: genId(), name: "", price: "" };
 }
 function defaultTraiteurCategories() {
   return { entree: [blankRow()], plat: [blankRow()], dessert: [blankRow()], boisson: [blankRow()] };
@@ -97,9 +97,16 @@ export default function LOiseauTraiteur() {
   // dernières valeurs connues des catégories "récurrentes" (dessert, boisson), reprises automatiquement
   // sur les nouveaux jours. La ref évite les soucis de fermeture obsolète dans l'effet de changement de date.
   const recurringDefaultsRef = useRef({});
-  // tarifs par catégorie (identiques pour tous les plats d'une même catégorie)
-  const categoryPricesRef = useRef({ entree: 0, plat: 0, dessert: 0, boisson: 0 });
-  const [categoryPriceInputs, setCategoryPriceInputs] = useState({ entree: "", plat: "", dessert: "", boisson: "" });
+  // tarifs par défaut par catégorie (utilisés sauf si un plat précis a un prix particulier),
+  // + le prix de la formule plat + dessert + boisson.
+  const categoryPricesRef = useRef({ entree: 0, plat: 0, dessert: 0, boisson: 0, formule: 12.5 });
+  const [categoryPriceInputs, setCategoryPriceInputs] = useState({
+    entree: "",
+    plat: "",
+    dessert: "",
+    boisson: "",
+    formule: "",
+  });
   const [priceStatus, setPriceStatus] = useState("");
   // vue "commandes reçues" pour le traiteur, indépendante du jour dont on édite le menu
   const [ordersViewDate, setOrdersViewDate] = useState("");
@@ -134,13 +141,16 @@ export default function LOiseauTraiteur() {
     })();
     (async () => {
       try {
-        const next = await api.getCategoryPrices();
+        const raw = await api.getCategoryPrices();
+        // "formule" n'existait pas avant cette mise à jour : on garde 12,5 par défaut si absent.
+        const next = { entree: 0, plat: 0, dessert: 0, boisson: 0, formule: 12.5, ...raw };
         categoryPricesRef.current = next;
         setCategoryPriceInputs({
           entree: String(next.entree ?? ""),
           plat: String(next.plat ?? ""),
           dessert: String(next.dessert ?? ""),
           boisson: String(next.boisson ?? ""),
+          formule: String(next.formule ?? ""),
         });
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
@@ -227,11 +237,36 @@ export default function LOiseauTraiteur() {
     };
   }, [selectedDoctor, selectedOrderDate]);
 
+  // Calcule, pour une commande donnée, combien de fois la formule plat + dessert + boisson
+  // s'applique (uniquement sur les plats au tarif par défaut : un plat à prix spécial reste
+  // facturé à son propre tarif, en plus de la formule), et l'économie que ça représente.
+  function computeFormulaInfo(selections) {
+    const arrFor = (key) => selections[key] || [];
+    const platDefault = categoryPricesRef.current.plat || 0;
+    const dessertDefault = categoryPricesRef.current.dessert || 0;
+    const boissonDefault = categoryPricesRef.current.boisson || 0;
+    const formulaPrice = categoryPricesRef.current.formule;
+
+    function standardQty(key, defaultPrice) {
+      return arrFor(key).reduce((s, it) => s + (it.price === defaultPrice ? it.qty || 1 : 0), 0);
+    }
+    const setsCount = Math.min(
+      standardQty("plat", platDefault),
+      standardQty("dessert", dessertDefault),
+      standardQty("boisson", boissonDefault)
+    );
+    const savingsPerSet = platDefault + dessertDefault + boissonDefault - (formulaPrice ?? 0);
+    const applies = formulaPrice != null && setsCount > 0 && savingsPerSet > 0;
+    return { applies, setsCount, savings: applies ? setsCount * savingsPerSet : 0 };
+  }
+
   function computeTotal(selections) {
-    return CATEGORIES.reduce((s, c) => {
+    const rawTotal = CATEGORIES.reduce((s, c) => {
       const arr = selections[c.key] || [];
       return s + arr.reduce((sub, it) => sub + it.price * (it.qty || 1), 0);
     }, 0);
+    const { savings } = computeFormulaInfo(selections);
+    return rawTotal - savings;
   }
 
   async function saveSelections(newSelections) {
@@ -259,7 +294,10 @@ export default function LOiseauTraiteur() {
     const current = (myOrder && myOrder.selections) || {};
     const arr = current[catKey] || [];
     const exists = arr.some((x) => x.id === item.id);
-    const price = categoryPricesRef.current[catKey] || 0;
+    // un plat avec un tarif propre garde ce tarif ; sinon on applique le tarif par défaut
+    // de la catégorie (le prix est figé au moment du choix, il ne bougera pas rétroactivement
+    // si le tarif change plus tard).
+    const price = item.price != null ? item.price : categoryPricesRef.current[catKey] || 0;
     const newArr = exists
       ? arr.filter((x) => x.id !== item.id)
       : [...arr, { id: item.id, name: item.name, price, qty: 1 }];
@@ -310,7 +348,9 @@ export default function LOiseauTraiteur() {
         const next = {};
         CATEGORIES.forEach((c) => {
           const arr = cats[c.key] || [];
-          next[c.key] = arr.length ? arr.map((d) => ({ id: d.id, name: d.name })) : [blankRow()];
+          next[c.key] = arr.length
+            ? arr.map((d) => ({ id: d.id, name: d.name, price: d.price != null ? String(d.price) : "" }))
+            : [blankRow()];
         });
         setTraiteurCategories(next);
       } else {
@@ -318,7 +358,11 @@ export default function LOiseauTraiteur() {
         const next = {};
         CATEGORIES.forEach((c) => {
           if (c.recurring && defaults[c.key] && defaults[c.key].length) {
-            next[c.key] = defaults[c.key].map((d) => ({ id: genId(), name: d.name }));
+            next[c.key] = defaults[c.key].map((d) => ({
+              id: genId(),
+              name: d.name,
+              price: d.price != null ? String(d.price) : "",
+            }));
           } else {
             next[c.key] = [blankRow()];
           }
@@ -349,7 +393,18 @@ export default function LOiseauTraiteur() {
     let totalItems = 0;
     CATEGORIES.forEach((c) => {
       const rows = traiteurCategories[c.key]
-        .map((d) => ({ id: d.id, name: d.name.trim() }))
+        .map((d) => {
+          const name = d.name.trim();
+          const priceStr = String(d.price ?? "").trim();
+          const row = { id: d.id, name };
+          // Prix laissé vide = ce plat suit le tarif par défaut de sa catégorie.
+          // Prix renseigné = ce plat précis a son propre tarif (ex: dessert plus cher).
+          if (priceStr) {
+            const parsedPrice = parseFloat(priceStr.replace(",", "."));
+            if (!isNaN(parsedPrice) && parsedPrice >= 0) row.price = parsedPrice;
+          }
+          return row;
+        })
         .filter((d) => d.name);
       cleaned[c.key] = rows;
       totalItems += rows.length;
@@ -389,10 +444,11 @@ export default function LOiseauTraiteur() {
   async function savePrices() {
     const cleaned = {};
     let valid = true;
-    CATEGORIES.forEach((c) => {
-      const n = parseFloat(String(categoryPriceInputs[c.key]).replace(",", "."));
+    const keys = [...CATEGORIES.map((c) => c.key), "formule"];
+    keys.forEach((key) => {
+      const n = parseFloat(String(categoryPriceInputs[key]).replace(",", "."));
       if (isNaN(n) || n < 0) valid = false;
-      cleaned[c.key] = isNaN(n) ? 0 : n;
+      cleaned[key] = isNaN(n) ? 0 : n;
     });
     if (!valid) {
       setPriceStatus("error");
@@ -560,6 +616,7 @@ export default function LOiseauTraiteur() {
           .map((sel) => (sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name))
           .join(" · ")
       : "";
+  const formulaInfo = myOrder && myOrder.selections ? computeFormulaInfo(myOrder.selections) : { applies: false, setsCount: 0, savings: 0 };
 
   return (
     <div className="lf-root">
@@ -658,7 +715,6 @@ export default function LOiseauTraiteur() {
           font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 600; margin: 0;
           color: var(--pine-dark);
         }
-        .lf-catprice { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-soft); font-weight: 500; }
         .lf-dish-stepper {
           display: flex; align-items: center; gap: 10px; margin-top: 2px;
         }
@@ -698,12 +754,18 @@ export default function LOiseauTraiteur() {
         }
         .lf-ordersummary-text { font-size: 13.5px; }
         .lf-ordersummary-total { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 16px; color: var(--pine-dark); }
+        .lf-formula-note {
+          background: var(--blush-light); border: 1px solid var(--blush); border-radius: 10px;
+          padding: 9px 13px; font-size: 12.5px; color: var(--ink); margin: 0 0 18px;
+        }
+        .lf-formula-applied { font-size: 12.5px; color: var(--pine-dark); font-weight: 600; }
 
         .lf-empty { text-align: center; padding: 34px 20px; color: var(--ink-soft); }
         .lf-empty-title { font-family: 'Cormorant Garamond', serif; font-size: 18px; color: var(--ink); margin: 0 0 6px; font-weight: 600; }
 
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; }
+        .lf-input-price { width: 90px; flex: none; }
 
         .lf-status { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .lf-status.ok { color: var(--pine-dark); }
@@ -838,21 +900,26 @@ export default function LOiseauTraiteur() {
 
                 {currentMenu && (
                   <>
-                    <p style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 0, marginBottom: 18 }}>
-                      Menu du {formatDateLong(currentMenu.date)} — un choix possible par catégorie
+                    <p style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 0, marginBottom: 12 }}>
+                      Menu du {formatDateLong(currentMenu.date)} — plusieurs choix possibles par catégorie
                     </p>
+                    {categoryPricesRef.current.formule != null && (
+                      <p className="lf-formula-note">
+                        💡 Formule plat + dessert + boisson : <strong>{formatEuro(categoryPricesRef.current.formule)}</strong> au
+                        lieu du prix à l'unité.
+                      </p>
+                    )}
 
                     {activeCategories.map((cat) => (
                       <div className="lf-catsection" key={cat.key}>
-                        <h3>
-                          {cat.label} <span className="lf-catprice">{formatEuro(categoryPricesRef.current[cat.key])}</span>
-                        </h3>
+                        <h3>{cat.label}</h3>
                         <div className="lf-dishes">
                           {currentMenu.categories[cat.key].map((dish) => {
                             const entry = ((myOrder && myOrder.selections && myOrder.selections[cat.key]) || []).find(
                               (x) => x.id === dish.id
                             );
                             const isSelected = !!entry;
+                            const effectivePrice = dish.price != null ? dish.price : categoryPricesRef.current[cat.key] || 0;
                             return (
                               <div
                                 key={dish.id}
@@ -867,9 +934,8 @@ export default function LOiseauTraiteur() {
                                     <Check size={13} />
                                   </span>
                                 )}
-                                <div className="lf-dish-name" style={{ marginBottom: isSelected ? 10 : 0 }}>
-                                  {dish.name}
-                                </div>
+                                <div className="lf-dish-name">{dish.name}</div>
+                                <div className="lf-dish-price">{formatEuro(effectivePrice)}</div>
                                 {isSelected && (
                                   <div className="lf-dish-stepper" onClick={(e) => e.stopPropagation()}>
                                     <button
@@ -913,6 +979,14 @@ export default function LOiseauTraiteur() {
                             <span className="lf-status ok">
                               <Check size={14} /> Commande enregistrée — {orderSummaryText}
                             </span>
+                            {formulaInfo.applies && (
+                              <>
+                                <br />
+                                <span className="lf-formula-applied">
+                                  Formule appliquée — vous économisez {formatEuro(formulaInfo.savings)}
+                                </span>
+                              </>
+                            )}
                             <br />
                             <button className="lf-btn lf-btn-text" onClick={cancelOrder} style={{ paddingLeft: 0, marginTop: 4 }}>
                               Annuler toute la commande
@@ -1034,6 +1108,7 @@ export default function LOiseauTraiteur() {
                                 [cat.key]: recurringDefaultsRef.current[cat.key].map((d) => ({
                                   id: genId(),
                                   name: d.name,
+                                  price: d.price != null ? String(d.price) : "",
                                 })),
                               }))
                             }
@@ -1052,6 +1127,14 @@ export default function LOiseauTraiteur() {
                         placeholder={`Nom (${cat.singular})`}
                         value={d.name}
                         onChange={(e) => updateDishField(cat.key, d.id, "name", e.target.value)}
+                      />
+                      <input
+                        className="lf-input lf-input-price"
+                        placeholder={categoryPriceInputs[cat.key] ? `${categoryPriceInputs[cat.key]} €` : "Prix"}
+                        inputMode="decimal"
+                        value={d.price ?? ""}
+                        onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
+                        title="Laisser vide pour utiliser le tarif par défaut de la catégorie"
                       />
                       <button
                         className="lf-btn lf-btn-text"
@@ -1109,10 +1192,10 @@ export default function LOiseauTraiteur() {
             )}
 
             <div className="lf-card">
-              <span className="lf-label">Tarifs par catégorie</span>
+              <span className="lf-label">Tarifs</span>
               <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
-                Identiques pour tous les plats d'une même catégorie, et mémorisés une fois pour toutes — pas besoin de les
-                ressaisir chaque jour, seulement si les prix changent.
+                Tarif par défaut pour chaque catégorie (un plat précis peut avoir son propre prix, voir plus haut), plus le
+                prix de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
               </p>
               <div className="lf-row">
                 {CATEGORIES.map((c) => (
@@ -1131,6 +1214,20 @@ export default function LOiseauTraiteur() {
                     />
                   </div>
                 ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-formule">
+                    Formule plat+dessert+boisson
+                  </label>
+                  <input
+                    id="price-formule"
+                    className="lf-input"
+                    style={{ width: 90 }}
+                    inputMode="decimal"
+                    placeholder="12,50"
+                    value={categoryPriceInputs.formule}
+                    onChange={(e) => updatePriceField("formule", e.target.value)}
+                  />
+                </div>
                 <button
                   className="lf-btn lf-btn-primary"
                   onClick={savePrices}
@@ -1148,7 +1245,7 @@ export default function LOiseauTraiteur() {
               )}
               {priceStatus === "error" && (
                 <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
-                  Indiquez un prix valide (0 ou plus) pour chaque catégorie.
+                  Indiquez un prix valide (0 ou plus) pour chaque champ.
                 </p>
               )}
               {priceStatus === "save-error" && (
