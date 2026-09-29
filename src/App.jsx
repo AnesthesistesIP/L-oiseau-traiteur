@@ -7,7 +7,7 @@ import * as api from "./firestoreApi.js";
 // fixes, est automatiquement reproposé chaque jour — voir catalogRef plus bas.
 const CATEGORIES = [
   { key: "entree", label: "Entrées", singular: "entrée", article: "une", recurring: false },
-  { key: "plat", label: "Plats", singular: "plat", article: "un", recurring: false },
+  { key: "plat", label: "Plats du jour", singular: "plat", article: "un", recurring: false },
   { key: "dessert", label: "Desserts", singular: "dessert", article: "un", recurring: true },
   { key: "boisson", label: "Boissons", singular: "boisson", article: "une", recurring: true },
 ];
@@ -40,10 +40,6 @@ function splitPlatGroups(dishes) {
   const autres = [];
   (dishes || []).forEach((d) => (d.group === "autres" ? autres : jour).push(d));
   return { jour, autres };
-}
-function toEditableRows(catalog) {
-  const conv = (arr) => (arr || []).map((d) => ({ id: d.id || genId(), name: d.name, price: d.price != null ? String(d.price) : "" }));
-  return { dessert: conv(catalog.dessert), boisson: conv(catalog.boisson) };
 }
 function defaultTraiteurCategories() {
   return { entree: [blankRow()], plat: [blankRow()], dessert: [blankRow()], boisson: [blankRow()] };
@@ -141,12 +137,11 @@ export default function LOiseauTraiteur() {
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
   const [traiteurCategories, setTraiteurCategories] = useState(defaultTraiteurCategories());
   const [traiteurStatus, setTraiteurStatus] = useState("");
-  // Catalogue fixe des desserts et boissons proposés chaque jour (avec leur prix, verrouillé
-  // dans le formulaire du menu quotidien). Modifiable uniquement via la carte "Catalogue" ;
-  // ne change jamais tout seul suite à l'enregistrement d'un menu du jour.
+  // Catalogue fixe des desserts et boissons proposés chaque jour, avec leur prix verrouillé dans
+  // le formulaire du menu quotidien. Liste figée dans le code (voir seedCatalog) : pour un
+  // dessert/une boisson exceptionnel un jour donné, on l'ajoute simplement ce jour-là avec son
+  // propre prix, sans toucher à cette liste fixe.
   const catalogRef = useRef(seedCatalog());
-  const [catalogRows, setCatalogRows] = useState(() => toEditableRows(seedCatalog()));
-  const [catalogStatus, setCatalogStatus] = useState("");
   // Tarif par défaut du plat (utilisé si un "plat du jour" ou "autre" n'a pas de prix propre
   // renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
   // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant
@@ -181,18 +176,7 @@ export default function LOiseauTraiteur() {
       }
       setDoctorsLoaded(true);
     })();
-    (async () => {
-      try {
-        const saved = await api.getCatalog();
-        // Rien enregistré encore dans Firestore : on garde le catalogue de départ pré-rempli.
-        const next = saved && (saved.dessert?.length || saved.boisson?.length) ? saved : seedCatalog();
-        catalogRef.current = next;
-        setCatalogRows(toEditableRows(next));
-      } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
-        /* garde le catalogue de départ */
-      }
-    })();
+
     (async () => {
       try {
         const raw = await api.getCategoryPrices();
@@ -422,8 +406,8 @@ export default function LOiseauTraiteur() {
             // ces 2 lignes sont pré-remplies pour éviter de les retaper, à compléter avec le
             // détail du plat du jour.
             next[c.key] = [
-              { id: genId(), name: "Plat du jour viande ou poisson", price: "", group: "jour" },
-              { id: genId(), name: "Plat du jour végétarien", price: "", group: "jour" },
+              { id: genId(), name: "Viande ou Poisson : ", price: "", group: "jour" },
+              { id: genId(), name: "Végétarien : ", price: "", group: "jour" },
             ];
           } else {
             next[c.key] = [blankRow()];
@@ -485,53 +469,6 @@ export default function LOiseauTraiteur() {
       ...prev,
       [catKey]: prev[catKey].length > 1 ? prev[catKey].filter((d) => d.id !== id) : prev[catKey],
     }));
-  }
-
-  // ---------- catalogue fixe (desserts / boissons) ----------
-  function updateCatalogField(catKey, id, field, value) {
-    setCatalogRows((prev) => ({
-      ...prev,
-      [catKey]: prev[catKey].map((d) => (d.id === id ? { ...d, [field]: value } : d)),
-    }));
-  }
-  function addCatalogRow(catKey) {
-    setCatalogRows((prev) => ({ ...prev, [catKey]: [...prev[catKey], { id: genId(), name: "", price: "" }] }));
-  }
-  function removeCatalogRow(catKey, id) {
-    setCatalogRows((prev) => ({
-      ...prev,
-      [catKey]: prev[catKey].length > 1 ? prev[catKey].filter((d) => d.id !== id) : prev[catKey],
-    }));
-  }
-  async function saveCatalogFn() {
-    const cleaned = {};
-    let valid = true;
-    ["dessert", "boisson"].forEach((key) => {
-      cleaned[key] = catalogRows[key]
-        .map((d) => {
-          const name = d.name.trim();
-          if (!name) return null;
-          const priceStr = String(d.price ?? "").trim();
-          const price = parseFloat(priceStr.replace(",", "."));
-          if (priceStr && (isNaN(price) || price < 0)) valid = false;
-          return { id: d.id, name, price: isNaN(price) ? 0 : price, fromCatalog: true };
-        })
-        .filter(Boolean);
-    });
-    if (!valid) {
-      setCatalogStatus("error");
-      return;
-    }
-    setCatalogStatus("saving");
-    catalogRef.current = cleaned;
-    try {
-      await api.saveCatalog(cleaned);
-      setCatalogStatus("saved");
-    } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
-      setCatalogStatus("save-error");
-    }
-    setTimeout(() => setCatalogStatus(""), 2000);
   }
 
   async function saveMenu() {
@@ -1124,12 +1061,7 @@ export default function LOiseauTraiteur() {
                       return (
                         <div className="lf-catsection" key={cat.key}>
                           <h3>{cat.label}</h3>
-                          {jour.length > 0 && (
-                            <>
-                              <p className="lf-subgroup-label">Plat du jour</p>
-                              <div className="lf-dishes">{jour.map((dish) => renderDishCard(cat, dish))}</div>
-                            </>
-                          )}
+                          {jour.length > 0 && <div className="lf-dishes">{jour.map((dish) => renderDishCard(cat, dish))}</div>}
                           {autres.length > 0 && (
                             <>
                               <p className="lf-subgroup-label" style={{ marginTop: 14 }}>
@@ -1295,7 +1227,6 @@ export default function LOiseauTraiteur() {
                   </div>
                   {cat.key === "plat" ? (
                     <>
-                      <p className="lf-subgroup-label">Plat du jour</p>
                       {splitPlatGroups(traiteurCategories.plat).jour.map((d) => renderDishRow(cat, d))}
                       <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, "jour")}>
                         <Plus size={14} /> Ajouter un plat du jour
@@ -1359,68 +1290,6 @@ export default function LOiseauTraiteur() {
                 </div>
               </div>
             )}
-
-            <div className="lf-card">
-              <span className="lf-label">Catalogue desserts & boissons</span>
-              <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 16 }}>
-                Cette liste complète est reproposée automatiquement chaque jour, avec un prix fixe et verrouillé. Si un
-                article manque un jour, supprimez-le seulement dans le menu du jour (ci-dessus) — il reviendra tout seul le
-                lendemain. Modifiez-le ici uniquement pour un changement durable (nouvel article, prix qui change).
-              </p>
-              {["dessert", "boisson"].map((catKey) => (
-                <div className="lf-catsection" key={catKey}>
-                  <h3>{categoryLabel(catKey)}</h3>
-                  {catalogRows[catKey].map((d) => (
-                    <div className="lf-dishrow" key={d.id}>
-                      <input
-                        className="lf-input"
-                        placeholder={`Nom (${categorySingular(catKey)})`}
-                        value={d.name}
-                        onChange={(e) => updateCatalogField(catKey, d.id, "name", e.target.value)}
-                      />
-                      <input
-                        className="lf-input lf-input-price"
-                        placeholder="Prix"
-                        inputMode="decimal"
-                        value={d.price ?? ""}
-                        onChange={(e) => updateCatalogField(catKey, d.id, "price", e.target.value)}
-                      />
-                      <button
-                        className="lf-btn lf-btn-text"
-                        onClick={() => removeCatalogRow(catKey, d.id)}
-                        aria-label={`Retirer du catalogue : ${categorySingular(catKey)}`}
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                  <button className="lf-btn lf-btn-ghost" onClick={() => addCatalogRow(catKey)}>
-                    <Plus size={14} /> Ajouter au catalogue ({categorySingular(catKey)})
-                  </button>
-                </div>
-              ))}
-              <div className="lf-row" style={{ marginTop: 8 }}>
-                <button className="lf-btn lf-btn-primary" onClick={saveCatalogFn} disabled={catalogStatus === "saving"}>
-                  {catalogStatus === "saving" ? <Loader2 className="lf-spin" size={14} /> : null}
-                  Enregistrer le catalogue
-                </button>
-              </div>
-              {catalogStatus === "saved" && (
-                <p className="lf-status ok" style={{ marginTop: 10, marginBottom: 0 }}>
-                  <Check size={14} /> Catalogue enregistré — appliqué dès demain (les menus déjà publiés ne changent pas)
-                </p>
-              )}
-              {catalogStatus === "error" && (
-                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
-                  Indiquez un prix valide (0 ou plus) pour chaque article.
-                </p>
-              )}
-              {catalogStatus === "save-error" && (
-                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
-                  La sauvegarde a échoué, réessayez.
-                </p>
-              )}
-            </div>
 
             <div className="lf-card">
               <span className="lf-label">Tarifs</span>

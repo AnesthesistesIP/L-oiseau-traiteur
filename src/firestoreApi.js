@@ -28,15 +28,6 @@ export async function saveCategoryPrices(prices) {
   await setDoc(doc(db, "meta", "categoryPrices"), prices);
 }
 
-// ---------- catalogue fixe (desserts & boissons proposés chaque jour) ----------
-export async function getCatalog() {
-  const snap = await getDoc(doc(db, "meta", "catalog"));
-  return snap.exists() ? snap.data() : null;
-}
-export async function saveCatalog(catalog) {
-  await setDoc(doc(db, "meta", "catalog"), catalog);
-}
-
 // ---------- menus ----------
 export async function getMenu(date) {
   const snap = await getDoc(doc(db, "menus", date));
