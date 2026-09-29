@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Bird, Plus, X, Download, Check, Loader2, RotateCcw } from "lucide-react";
+import { Plus, X, Download, Check, Loader2, RotateCcw } from "lucide-react";
 import * as api from "./firestoreApi.js";
+import logoTraiteur from "./logo-traiteur.png";
 
 // ---------- constants ----------
 // "recurring: true" = catégorie dont le catalogue complet (desserts, boissons), avec des prix
@@ -884,10 +885,9 @@ export default function LOiseauTraiteur() {
 
         .lf-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
         .lf-logo {
-          width: 48px; height: 48px; border-radius: 999px; background: #fff; border: 2px solid var(--pine);
-          color: var(--pine); display: flex; align-items: center; justify-content: center;
-          flex-shrink: 0;
+          width: 48px; height: 48px; border-radius: 999px; flex-shrink: 0; overflow: hidden;
         }
+        .lf-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .lf-header h1 {
           font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 32px; margin: 0;
           letter-spacing: -0.01em;
@@ -1016,6 +1016,9 @@ export default function LOiseauTraiteur() {
           font-size: 13px; color: var(--ink-soft); pointer-events: none;
         }
         .lf-input-locked { background: var(--line); color: var(--ink-soft); cursor: not-allowed; }
+        .lf-formula-label-badge {
+          display: flex; align-items: center; width: auto; white-space: nowrap; font-size: 13.5px;
+        }
 
         .lf-status { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .lf-status.ok { color: var(--pine-dark); }
@@ -1047,7 +1050,7 @@ export default function LOiseauTraiteur() {
       <div className="lf-wrap">
         <div className="lf-header">
           <div className="lf-logo">
-            <Bird size={22} />
+            <img src={logoTraiteur} alt="L'Oiseau Traiteur" />
           </div>
           <div>
             <h1>L'Oiseau Traiteur</h1>
@@ -1212,9 +1215,7 @@ export default function LOiseauTraiteur() {
                             {formulaInfo.applies && (
                               <>
                                 <br />
-                                <span className="lf-formula-applied">
-                                  Formule appliquée — vous économisez {formatEuro(formulaInfo.savings)}
-                                </span>
+                                <span className="lf-formula-applied">Remise formule appliquée</span>
                               </>
                             )}
                           </>
@@ -1538,20 +1539,8 @@ export default function LOiseauTraiteur() {
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-remiseFormule">
-                    Remise formule (plat+dessert+boisson)
-                  </label>
-                  <div className="lf-price-field">
-                    <input
-                      id="price-remiseFormule"
-                      className="lf-input lf-input-locked"
-                      style={{ width: 90 }}
-                      value={categoryPricesRef.current.remiseFormule}
-                      disabled
-                      title="Remise appliquée par ensemble complet plat+dessert+boisson commandé"
-                    />
-                    <span className="lf-price-suffix">€</span>
-                  </div>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }}>Remise en cas de formule</label>
+                  <div className="lf-input lf-input-locked lf-formula-label-badge">plat + dessert + boisson</div>
                 </div>
               </div>
             </div>
