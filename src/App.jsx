@@ -801,7 +801,7 @@ export default function LOiseauTraiteur() {
     myOrder && myOrder.selections
       ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
           .map((sel) => (sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name))
-          .join(" · ")
+          .join(" / ")
       : "";
   const formulaInfo = myOrder && myOrder.selections ? computeFormulaInfo(myOrder.selections) : { applies: false, setsCount: 0, savings: 0 };
 
