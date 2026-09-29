@@ -81,7 +81,10 @@ function genId() {
 // Catalogue de départ (utilisé uniquement si rien n'a encore été enregistré dans Firestore) :
 // la liste complète des desserts et boissons habituellement proposés, avec leurs prix fixes.
 function seedCatalog() {
-  const withIds = (arr) => arr.map((d) => ({ id: genId(), ...d, fromCatalog: true }));
+  // Trie par prix croissant, puis par ordre alphabétique à prix égal — s'applique automatiquement
+  // à tout futur ajout ou changement de prix dans les listes ci-dessous.
+  const sortByPriceThenName = (arr) => [...arr].sort((a, b) => a.price - b.price || a.name.localeCompare(b.name, "fr"));
+  const withIds = (arr) => sortByPriceThenName(arr).map((d) => ({ id: genId(), ...d, fromCatalog: true }));
   return {
     dessert: withIds([
       { name: "Cake citron", price: 3 },
@@ -1008,7 +1011,7 @@ export default function LOiseauTraiteur() {
 
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; min-width: 0; }
-        .lf-input-price { width: 90px; flex: none; }
+        .lf-input-price { width: 64px; flex: none; text-align: right; }
         .lf-price-field { position: relative; display: inline-flex; flex: none; align-self: flex-start; }
         .lf-price-field input { padding-right: 24px; }
         .lf-price-field .lf-price-suffix {
