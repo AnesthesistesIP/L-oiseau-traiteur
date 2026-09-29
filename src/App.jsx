@@ -23,6 +23,8 @@ const PLAT_SUBCATS = [
 function platSubcat(key) {
   return PLAT_SUBCATS.find((s) => s.key === key);
 }
+// Remise commerciale accordée par le traiteur, par personne, sur la facture du mois.
+const REMISE_COMMERCIALE_MENSUELLE = 5;
 function categoryLabel(key) {
   return (CATEGORIES.find((c) => c.key === key) || {}).label || key;
 }
@@ -684,16 +686,21 @@ export default function LOiseauTraiteur() {
 
   function exportCSV() {
     const lines = [];
-    lines.push("Médecin;Entrées;Plats;Desserts;Boissons;Total (EUR)");
+    lines.push("Médecin;Entrées;Plats;Desserts;Boissons;Total (EUR);Remise (EUR);Net à payer (EUR)");
     grouped.forEach((g) =>
       lines.push(
         `${escapeCsv(g.doctor)};${g.counts.entree};${g.counts.plat};${g.counts.dessert};${g.counts.boisson};${g.total
           .toFixed(2)
+          .replace(".", ",")};-${REMISE_COMMERCIALE_MENSUELLE.toFixed(2).replace(".", ",")};${(g.total - REMISE_COMMERCIALE_MENSUELLE)
+          .toFixed(2)
           .replace(".", ",")}`
       )
     );
+    const remiseTotal = REMISE_COMMERCIALE_MENSUELLE * grouped.length;
     lines.push(
       `TOTAL;${grandCounts.entree};${grandCounts.plat};${grandCounts.dessert};${grandCounts.boisson};${grandTotal
+        .toFixed(2)
+        .replace(".", ",")};-${remiseTotal.toFixed(2).replace(".", ",")};${(grandTotal - remiseTotal)
         .toFixed(2)
         .replace(".", ",")}`
     );
@@ -1480,6 +1487,8 @@ export default function LOiseauTraiteur() {
                       <th>Desserts</th>
                       <th>Boissons</th>
                       <th>Total</th>
+                      <th>Remise</th>
+                      <th>Net à payer</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1491,6 +1500,10 @@ export default function LOiseauTraiteur() {
                         <td className="lf-mono">{g.counts.dessert || 0}</td>
                         <td className="lf-mono">{g.counts.boisson || 0}</td>
                         <td className="lf-mono">{formatEuro(g.total)}</td>
+                        <td className="lf-mono" style={{ color: "var(--coral)" }}>
+                          -{formatEuro(REMISE_COMMERCIALE_MENSUELLE)}
+                        </td>
+                        <td className="lf-mono">{formatEuro(g.total - REMISE_COMMERCIALE_MENSUELLE)}</td>
                       </tr>
                     ))}
                     <tr className="lf-total-row">
@@ -1500,6 +1513,10 @@ export default function LOiseauTraiteur() {
                       <td className="lf-mono">{grandCounts.dessert}</td>
                       <td className="lf-mono">{grandCounts.boisson}</td>
                       <td className="lf-mono">{formatEuro(grandTotal)}</td>
+                      <td className="lf-mono" style={{ color: "var(--coral)" }}>
+                        -{formatEuro(REMISE_COMMERCIALE_MENSUELLE * grouped.length)}
+                      </td>
+                      <td className="lf-mono">{formatEuro(grandTotal - REMISE_COMMERCIALE_MENSUELLE * grouped.length)}</td>
                     </tr>
                   </tbody>
                 </table>
