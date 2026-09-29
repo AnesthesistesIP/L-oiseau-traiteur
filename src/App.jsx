@@ -3,8 +3,8 @@ import { Bird, Plus, X, Download, Check, Loader2, RotateCcw } from "lucide-react
 import * as api from "./firestoreApi.js";
 
 // ---------- constants ----------
-// "recurring: true" = catégorie qui change peu d'un jour à l'autre (desserts, boissons) :
-// elle est mémorisée automatiquement d'un jour sur l'autre pour éviter de la ressaisir.
+// "recurring: true" = catégorie dont le catalogue complet (desserts, boissons), avec des prix
+// fixes, est automatiquement reproposé chaque jour — voir catalogRef plus bas.
 const CATEGORIES = [
   { key: "entree", label: "Entrées", singular: "entrée", article: "une", recurring: false },
   { key: "plat", label: "Plats", singular: "plat", article: "un", recurring: false },
@@ -31,6 +31,20 @@ function selArray(val) {
 function blankRow() {
   return { id: genId(), name: "", price: "" };
 }
+// Convertit un catalogue {dessert:[{id,name,price}], boisson:[...]} en lignes éditables
+// (prix en texte, pour les champs de saisie de la carte "Catalogue").
+// Sépare les plats en deux groupes d'affichage : "Plat du jour" et "Autres" (Buddha Bowl, Sando...).
+// Un plat sans groupe (ancien menu enregistré avant cette fonctionnalité) est traité comme "jour".
+function splitPlatGroups(dishes) {
+  const jour = [];
+  const autres = [];
+  (dishes || []).forEach((d) => (d.group === "autres" ? autres : jour).push(d));
+  return { jour, autres };
+}
+function toEditableRows(catalog) {
+  const conv = (arr) => (arr || []).map((d) => ({ id: d.id || genId(), name: d.name, price: d.price != null ? String(d.price) : "" }));
+  return { dessert: conv(catalog.dessert), boisson: conv(catalog.boisson) };
+}
 function defaultTraiteurCategories() {
   return { entree: [blankRow()], plat: [blankRow()], dessert: [blankRow()], boisson: [blankRow()] };
 }
@@ -49,6 +63,39 @@ function currentMonthISO() {
 }
 function genId() {
   return Math.random().toString(36).slice(2, 9);
+}
+// Catalogue de départ (utilisé uniquement si rien n'a encore été enregistré dans Firestore) :
+// la liste complète des desserts et boissons habituellement proposés, avec leurs prix fixes.
+function seedCatalog() {
+  const withIds = (arr) => arr.map((d) => ({ id: genId(), ...d, fromCatalog: true }));
+  return {
+    dessert: withIds([
+      { name: "Cake citron", price: 3 },
+      { name: "Marbré", price: 2.8 },
+      { name: "Cookie kinder", price: 3 },
+      { name: "Cookie snickers", price: 3 },
+      { name: "Carrot cake", price: 3 },
+      { name: "Fromage blanc granola", price: 2.5 },
+      { name: "Fromage blanc abricot", price: 2.5 },
+      { name: "Brownies", price: 3 },
+      { name: "Bounty noir", price: 2.7 },
+      { name: "Fromage blanc crème de marrons", price: 2.5 },
+      { name: "Bounty lait", price: 2.7 },
+      { name: "Flan pâtissier pistache", price: 3.5 },
+    ]),
+    boisson: withIds([
+      { name: "San Pellegrino", price: 2.2 },
+      { name: "Volvic citron", price: 2 },
+      { name: "Jus de fruit Pago Ace", price: 2.6 },
+      { name: "Coca Cola", price: 1.7 },
+      { name: "Coca Cola Zero", price: 1.7 },
+      { name: "Oasis", price: 1.7 },
+      { name: "Schweppes agrumes", price: 1.7 },
+      { name: "Pulco citron", price: 1.7 },
+      { name: "Ice tea", price: 1.7 },
+      { name: "Bière artisanale", price: 4.2 },
+    ]),
+  };
 }
 function formatEuro(n) {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n || 0);
@@ -94,18 +141,21 @@ export default function LOiseauTraiteur() {
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
   const [traiteurCategories, setTraiteurCategories] = useState(defaultTraiteurCategories());
   const [traiteurStatus, setTraiteurStatus] = useState("");
-  // dernières valeurs connues des catégories "récurrentes" (dessert, boisson), reprises automatiquement
-  // sur les nouveaux jours. La ref évite les soucis de fermeture obsolète dans l'effet de changement de date.
-  const recurringDefaultsRef = useRef({});
-  // tarifs par défaut par catégorie (utilisés sauf si un plat précis a un prix particulier),
-  // + le prix de la formule plat + dessert + boisson.
-  const categoryPricesRef = useRef({ entree: 0, plat: 0, dessert: 0, boisson: 0, formule: 12.5 });
+  // Catalogue fixe des desserts et boissons proposés chaque jour (avec leur prix, verrouillé
+  // dans le formulaire du menu quotidien). Modifiable uniquement via la carte "Catalogue" ;
+  // ne change jamais tout seul suite à l'enregistrement d'un menu du jour.
+  const catalogRef = useRef(seedCatalog());
+  const [catalogRows, setCatalogRows] = useState(() => toEditableRows(seedCatalog()));
+  const [catalogStatus, setCatalogStatus] = useState("");
+  // Tarif par défaut du plat (utilisé si un "plat du jour" ou "autre" n'a pas de prix propre
+  // renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
+  // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant
+  // la proposition (catalogue pour desserts/boissons, saisie manuelle pour les entrées), donc
+  // pas besoin d'un tarif par défaut pour ces catégories.
+  const categoryPricesRef = useRef({ plat: 9, remiseFormule: 0.5 });
   const [categoryPriceInputs, setCategoryPriceInputs] = useState({
-    entree: "",
     plat: "",
-    dessert: "",
-    boisson: "",
-    formule: "",
+    remiseFormule: "",
   });
   const [priceStatus, setPriceStatus] = useState("");
   // vue "commandes reçues" pour le traiteur, indépendante du jour dont on édite le menu
@@ -133,24 +183,25 @@ export default function LOiseauTraiteur() {
     })();
     (async () => {
       try {
-        recurringDefaultsRef.current = await api.getRecurringDefaults();
+        const saved = await api.getCatalog();
+        // Rien enregistré encore dans Firestore : on garde le catalogue de départ pré-rempli.
+        const next = saved && (saved.dessert?.length || saved.boisson?.length) ? saved : seedCatalog();
+        catalogRef.current = next;
+        setCatalogRows(toEditableRows(next));
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
-        recurringDefaultsRef.current = {};
+        /* garde le catalogue de départ */
       }
     })();
     (async () => {
       try {
         const raw = await api.getCategoryPrices();
-        // "formule" n'existait pas avant cette mise à jour : on garde 12,5 par défaut si absent.
-        const next = { entree: 0, plat: 0, dessert: 0, boisson: 0, formule: 12.5, ...raw };
+        // Repli sur les valeurs par défaut si rien n'est encore enregistré dans Firestore.
+        const next = { plat: 9, remiseFormule: 0.5, ...raw };
         categoryPricesRef.current = next;
         setCategoryPriceInputs({
-          entree: String(next.entree ?? ""),
           plat: String(next.plat ?? ""),
-          dessert: String(next.dessert ?? ""),
-          boisson: String(next.boisson ?? ""),
-          formule: String(next.formule ?? ""),
+          remiseFormule: String(next.remiseFormule ?? ""),
         });
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
@@ -240,24 +291,18 @@ export default function LOiseauTraiteur() {
   // Calcule, pour une commande donnée, combien de fois la formule plat + dessert + boisson
   // s'applique (uniquement sur les plats au tarif par défaut : un plat à prix spécial reste
   // facturé à son propre tarif, en plus de la formule), et l'économie que ça représente.
+  // Compte, pour une commande donnée, combien d'ensembles complets "1 plat + 1 dessert + 1
+  // boisson" elle contient (peu importe leurs prix respectifs), et applique une remise
+  // forfaitaire par ensemble complet — ex: 2 plats + 2 desserts + 2 boissons = 2 ensembles
+  // = 2 fois la remise (utile pour une garde avec 2 repas commandés le même jour).
   function computeFormulaInfo(selections) {
-    const arrFor = (key) => selections[key] || [];
-    const platDefault = categoryPricesRef.current.plat || 0;
-    const dessertDefault = categoryPricesRef.current.dessert || 0;
-    const boissonDefault = categoryPricesRef.current.boisson || 0;
-    const formulaPrice = categoryPricesRef.current.formule;
-
-    function standardQty(key, defaultPrice) {
-      return arrFor(key).reduce((s, it) => s + (it.price === defaultPrice ? it.qty || 1 : 0), 0);
+    function unitsCount(key) {
+      return (selections[key] || []).reduce((s, it) => s + (it.qty || 1), 0);
     }
-    const setsCount = Math.min(
-      standardQty("plat", platDefault),
-      standardQty("dessert", dessertDefault),
-      standardQty("boisson", boissonDefault)
-    );
-    const savingsPerSet = platDefault + dessertDefault + boissonDefault - (formulaPrice ?? 0);
-    const applies = formulaPrice != null && setsCount > 0 && savingsPerSet > 0;
-    return { applies, setsCount, savings: applies ? setsCount * savingsPerSet : 0 };
+    const setsCount = Math.min(unitsCount("plat"), unitsCount("dessert"), unitsCount("boisson"));
+    const remise = categoryPricesRef.current.remiseFormule || 0;
+    const applies = setsCount > 0 && remise > 0;
+    return { applies, setsCount, savings: applies ? setsCount * remise : 0 };
   }
 
   function computeTotal(selections) {
@@ -349,20 +394,37 @@ export default function LOiseauTraiteur() {
         CATEGORIES.forEach((c) => {
           const arr = cats[c.key] || [];
           next[c.key] = arr.length
-            ? arr.map((d) => ({ id: d.id, name: d.name, price: d.price != null ? String(d.price) : "" }))
+            ? arr.map((d) => ({
+                id: d.id,
+                name: d.name,
+                price: d.price != null ? String(d.price) : "",
+                fromCatalog: !!d.fromCatalog,
+                group: d.group,
+              }))
             : [blankRow()];
         });
         setTraiteurCategories(next);
       } else {
-        const defaults = recurringDefaultsRef.current || {};
+        // Nouveau jour sans menu enregistré : les catégories du catalogue (desserts, boissons)
+        // repartent toujours de la liste complète et à jour du catalogue, avec prix verrouillé —
+        // qu'elles aient été modifiées la veille ou non.
         const next = {};
         CATEGORIES.forEach((c) => {
-          if (c.recurring && defaults[c.key] && defaults[c.key].length) {
-            next[c.key] = defaults[c.key].map((d) => ({
+          if (c.recurring && catalogRef.current[c.key] && catalogRef.current[c.key].length) {
+            next[c.key] = catalogRef.current[c.key].map((d) => ({
               id: genId(),
               name: d.name,
               price: d.price != null ? String(d.price) : "",
+              fromCatalog: true,
             }));
+          } else if (c.key === "plat") {
+            // Il y a chaque jour un plat du jour viande/poisson et un plat du jour végétarien :
+            // ces 2 lignes sont pré-remplies pour éviter de les retaper, à compléter avec le
+            // détail du plat du jour.
+            next[c.key] = [
+              { id: genId(), name: "Plat du jour viande ou poisson", price: "", group: "jour" },
+              { id: genId(), name: "Plat du jour végétarien", price: "", group: "jour" },
+            ];
           } else {
             next[c.key] = [blankRow()];
           }
@@ -378,14 +440,98 @@ export default function LOiseauTraiteur() {
       [catKey]: prev[catKey].map((d) => (d.id === id ? { ...d, [field]: value } : d)),
     }));
   }
-  function addDishRow(catKey) {
-    setTraiteurCategories((prev) => ({ ...prev, [catKey]: [...prev[catKey], blankRow()] }));
+  function addDishRow(catKey, group) {
+    setTraiteurCategories((prev) => ({
+      ...prev,
+      [catKey]: [...prev[catKey], group ? { ...blankRow(), group } : blankRow()],
+    }));
+  }
+  // Rendu d'une ligne de plat, réutilisé pour la liste simple et pour les deux sous-groupes
+  // "Plat du jour" / "Autres" de la catégorie Plats.
+  function renderDishRow(cat, d) {
+    return (
+      <div className="lf-dishrow" key={d.id}>
+        <input
+          className="lf-input"
+          placeholder={`Nom (${cat.singular})`}
+          value={d.name}
+          onChange={(e) => updateDishField(cat.key, d.id, "name", e.target.value)}
+        />
+        <input
+          className={`lf-input lf-input-price${d.fromCatalog ? " lf-input-locked" : ""}`}
+          placeholder={categoryPriceInputs[cat.key] ? `${categoryPriceInputs[cat.key]} €` : "Prix"}
+          inputMode="decimal"
+          value={d.price ?? ""}
+          onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
+          disabled={!!d.fromCatalog}
+          title={
+            d.fromCatalog
+              ? "Prix fixé dans le catalogue — modifiable uniquement dans la carte « Catalogue »"
+              : "Laisser vide pour utiliser le tarif par défaut de la catégorie"
+          }
+        />
+        <button
+          className="lf-btn lf-btn-text"
+          onClick={() => removeDishRow(cat.key, d.id)}
+          aria-label={`Supprimer : ${cat.singular}`}
+        >
+          <X size={16} />
+        </button>
+      </div>
+    );
   }
   function removeDishRow(catKey, id) {
     setTraiteurCategories((prev) => ({
       ...prev,
       [catKey]: prev[catKey].length > 1 ? prev[catKey].filter((d) => d.id !== id) : prev[catKey],
     }));
+  }
+
+  // ---------- catalogue fixe (desserts / boissons) ----------
+  function updateCatalogField(catKey, id, field, value) {
+    setCatalogRows((prev) => ({
+      ...prev,
+      [catKey]: prev[catKey].map((d) => (d.id === id ? { ...d, [field]: value } : d)),
+    }));
+  }
+  function addCatalogRow(catKey) {
+    setCatalogRows((prev) => ({ ...prev, [catKey]: [...prev[catKey], { id: genId(), name: "", price: "" }] }));
+  }
+  function removeCatalogRow(catKey, id) {
+    setCatalogRows((prev) => ({
+      ...prev,
+      [catKey]: prev[catKey].length > 1 ? prev[catKey].filter((d) => d.id !== id) : prev[catKey],
+    }));
+  }
+  async function saveCatalogFn() {
+    const cleaned = {};
+    let valid = true;
+    ["dessert", "boisson"].forEach((key) => {
+      cleaned[key] = catalogRows[key]
+        .map((d) => {
+          const name = d.name.trim();
+          if (!name) return null;
+          const priceStr = String(d.price ?? "").trim();
+          const price = parseFloat(priceStr.replace(",", "."));
+          if (priceStr && (isNaN(price) || price < 0)) valid = false;
+          return { id: d.id, name, price: isNaN(price) ? 0 : price, fromCatalog: true };
+        })
+        .filter(Boolean);
+    });
+    if (!valid) {
+      setCatalogStatus("error");
+      return;
+    }
+    setCatalogStatus("saving");
+    catalogRef.current = cleaned;
+    try {
+      await api.saveCatalog(cleaned);
+      setCatalogStatus("saved");
+    } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
+      setCatalogStatus("save-error");
+    }
+    setTimeout(() => setCatalogStatus(""), 2000);
   }
 
   async function saveMenu() {
@@ -397,8 +543,11 @@ export default function LOiseauTraiteur() {
           const name = d.name.trim();
           const priceStr = String(d.price ?? "").trim();
           const row = { id: d.id, name };
+          if (d.fromCatalog) row.fromCatalog = true;
+          if (d.group) row.group = d.group;
           // Prix laissé vide = ce plat suit le tarif par défaut de sa catégorie.
-          // Prix renseigné = ce plat précis a son propre tarif (ex: dessert plus cher).
+          // Prix renseigné = ce plat précis a son propre tarif (ex: dessert plus cher, ou un
+          // plat issu du catalogue dont le prix est fixe).
           if (priceStr) {
             const parsedPrice = parseFloat(priceStr.replace(",", "."));
             if (!isNaN(parsedPrice) && parsedPrice >= 0) row.price = parsedPrice;
@@ -423,15 +572,8 @@ export default function LOiseauTraiteur() {
       setTraiteurStatus("save-error");
       return;
     }
-    // mémorise les catégories récurrentes (dessert, boisson) pour préremplir les prochains jours
-    const nextDefaults = { ...recurringDefaultsRef.current };
-    CATEGORIES.forEach((c) => {
-      if (c.recurring && cleaned[c.key] && cleaned[c.key].length) {
-        nextDefaults[c.key] = cleaned[c.key];
-      }
-    });
-    recurringDefaultsRef.current = nextDefaults;
-    api.saveRecurringDefaults(nextDefaults).catch(() => {});
+    // Le catalogue (desserts/boissons) ne change jamais suite à l'enregistrement d'un menu du
+    // jour : il reste la référence fixe, gérée séparément dans la carte "Catalogue".
     setTraiteurStatus("saved");
     loadMenus();
     setTimeout(() => setTraiteurStatus(""), 2000);
@@ -444,7 +586,7 @@ export default function LOiseauTraiteur() {
   async function savePrices() {
     const cleaned = {};
     let valid = true;
-    const keys = [...CATEGORIES.map((c) => c.key), "formule"];
+    const keys = ["plat", "remiseFormule"];
     keys.forEach((key) => {
       const n = parseFloat(String(categoryPriceInputs[key]).replace(",", "."));
       if (isNaN(n) || n < 0) valid = false;
@@ -618,6 +760,59 @@ export default function LOiseauTraiteur() {
       : "";
   const formulaInfo = myOrder && myOrder.selections ? computeFormulaInfo(myOrder.selections) : { applies: false, setsCount: 0, savings: 0 };
 
+  // Rendu d'une carte de plat sélectionnable, réutilisé pour les sous-groupes "Plat du jour" /
+  // "Autres" de la catégorie Plats et pour les autres catégories.
+  function renderDishCard(cat, dish) {
+    const entry = ((myOrder && myOrder.selections && myOrder.selections[cat.key]) || []).find((x) => x.id === dish.id);
+    const isSelected = !!entry;
+    const effectivePrice = dish.price != null ? dish.price : categoryPricesRef.current[cat.key] || 0;
+    return (
+      <div
+        key={dish.id}
+        className={`lf-dish ${isSelected ? "selected" : ""}`}
+        onClick={() => toggleSelection(cat.key, dish)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && toggleSelection(cat.key, dish)}
+      >
+        {isSelected && (
+          <span className="lf-dish-check">
+            <Check size={13} />
+          </span>
+        )}
+        <div className="lf-dish-name">{dish.name}</div>
+        <div className="lf-dish-price">{formatEuro(effectivePrice)}</div>
+        {isSelected && (
+          <div className="lf-dish-stepper" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateItemQty(cat.key, dish.id, entry.qty - 1);
+              }}
+              disabled={entry.qty <= 1}
+              aria-label="Retirer une portion"
+            >
+              −
+            </button>
+            <span>{entry.qty}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateItemQty(cat.key, dish.id, entry.qty + 1);
+              }}
+              disabled={entry.qty >= 2}
+              aria-label="Ajouter une portion"
+            >
+              +
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="lf-root">
       <style>{`
@@ -729,6 +924,10 @@ export default function LOiseauTraiteur() {
           font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 14px; min-width: 14px; text-align: center;
         }
         .lf-catheader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        .lf-subgroup-label {
+          font-family: 'Cormorant Garamond', serif; font-size: 13px; font-weight: 600; color: var(--ink-soft);
+          text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 8px;
+        }
         .lf-recurring-hint {
           font-size: 11.5px; color: var(--ink-soft); background: var(--blush-light);
           padding: 3px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px;
@@ -766,6 +965,7 @@ export default function LOiseauTraiteur() {
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; }
         .lf-input-price { width: 90px; flex: none; }
+        .lf-input-locked { background: var(--line); color: var(--ink-soft); cursor: not-allowed; }
 
         .lf-status { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .lf-status.ok { color: var(--pine-dark); }
@@ -903,72 +1103,44 @@ export default function LOiseauTraiteur() {
                     <p style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 0, marginBottom: 12 }}>
                       Menu du {formatDateLong(currentMenu.date)} — plusieurs choix possibles par catégorie
                     </p>
-                    {categoryPricesRef.current.formule != null && (
+                    {categoryPricesRef.current.remiseFormule > 0 && (
                       <p className="lf-formula-note">
-                        💡 Formule plat + dessert + boisson : <strong>{formatEuro(categoryPricesRef.current.formule)}</strong> au
-                        lieu du prix à l'unité.
+                        💡 Formule plat + dessert + boisson : <strong>-{formatEuro(categoryPricesRef.current.remiseFormule)}</strong>{" "}
+                        sur le total dès qu'au moins 1 plat + 1 dessert + 1 boisson sont commandés.
                       </p>
                     )}
 
-                    {activeCategories.map((cat) => (
-                      <div className="lf-catsection" key={cat.key}>
-                        <h3>{cat.label}</h3>
-                        <div className="lf-dishes">
-                          {currentMenu.categories[cat.key].map((dish) => {
-                            const entry = ((myOrder && myOrder.selections && myOrder.selections[cat.key]) || []).find(
-                              (x) => x.id === dish.id
-                            );
-                            const isSelected = !!entry;
-                            const effectivePrice = dish.price != null ? dish.price : categoryPricesRef.current[cat.key] || 0;
-                            return (
-                              <div
-                                key={dish.id}
-                                className={`lf-dish ${isSelected ? "selected" : ""}`}
-                                onClick={() => toggleSelection(cat.key, dish)}
-                                role="button"
-                                tabIndex={0}
-                                onKeyDown={(e) => e.key === "Enter" && toggleSelection(cat.key, dish)}
-                              >
-                                {isSelected && (
-                                  <span className="lf-dish-check">
-                                    <Check size={13} />
-                                  </span>
-                                )}
-                                <div className="lf-dish-name">{dish.name}</div>
-                                <div className="lf-dish-price">{formatEuro(effectivePrice)}</div>
-                                {isSelected && (
-                                  <div className="lf-dish-stepper" onClick={(e) => e.stopPropagation()}>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        updateItemQty(cat.key, dish.id, entry.qty - 1);
-                                      }}
-                                      disabled={entry.qty <= 1}
-                                      aria-label="Retirer une portion"
-                                    >
-                                      −
-                                    </button>
-                                    <span>{entry.qty}</span>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        updateItemQty(cat.key, dish.id, entry.qty + 1);
-                                      }}
-                                      disabled={entry.qty >= 2}
-                                      aria-label="Ajouter une portion"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                    {activeCategories.map((cat) => {
+                      const dishes = currentMenu.categories[cat.key];
+                      if (cat.key !== "plat") {
+                        return (
+                          <div className="lf-catsection" key={cat.key}>
+                            <h3>{cat.label}</h3>
+                            <div className="lf-dishes">{dishes.map((dish) => renderDishCard(cat, dish))}</div>
+                          </div>
+                        );
+                      }
+                      const { jour, autres } = splitPlatGroups(dishes);
+                      return (
+                        <div className="lf-catsection" key={cat.key}>
+                          <h3>{cat.label}</h3>
+                          {jour.length > 0 && (
+                            <>
+                              <p className="lf-subgroup-label">Plat du jour</p>
+                              <div className="lf-dishes">{jour.map((dish) => renderDishCard(cat, dish))}</div>
+                            </>
+                          )}
+                          {autres.length > 0 && (
+                            <>
+                              <p className="lf-subgroup-label" style={{ marginTop: 14 }}>
+                                Autres
+                              </p>
+                              <div className="lf-dishes">{autres.map((dish) => renderDishCard(cat, dish))}</div>
+                            </>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="lf-ordersummary">
                       <div>
@@ -1097,57 +1269,54 @@ export default function LOiseauTraiteur() {
                     <h3>{cat.label}</h3>
                     {cat.recurring && (
                       <span className="lf-recurring-hint">
-                        Repris automatiquement du dernier menu
-                        {recurringDefaultsRef.current[cat.key] && recurringDefaultsRef.current[cat.key].length ? (
+                        Catalogue complet repris automatiquement chaque jour — prix verrouillé
+                        {catalogRef.current[cat.key] && catalogRef.current[cat.key].length ? (
                           <button
                             className="lf-btn lf-btn-text"
                             style={{ padding: "2px 6px" }}
                             onClick={() =>
                               setTraiteurCategories((prev) => ({
                                 ...prev,
-                                [cat.key]: recurringDefaultsRef.current[cat.key].map((d) => ({
+                                [cat.key]: catalogRef.current[cat.key].map((d) => ({
                                   id: genId(),
                                   name: d.name,
                                   price: d.price != null ? String(d.price) : "",
+                                  fromCatalog: true,
                                 })),
                               }))
                             }
-                            title="Recharger les valeurs habituelles"
+                            title="Remettre le catalogue complet (annule les suppressions faites aujourd'hui)"
                           >
-                            <RotateCcw size={12} /> recharger
+                            <RotateCcw size={12} /> recharger le catalogue
                           </button>
                         ) : null}
                       </span>
                     )}
                   </div>
-                  {traiteurCategories[cat.key].map((d) => (
-                    <div className="lf-dishrow" key={d.id}>
-                      <input
-                        className="lf-input"
-                        placeholder={`Nom (${cat.singular})`}
-                        value={d.name}
-                        onChange={(e) => updateDishField(cat.key, d.id, "name", e.target.value)}
-                      />
-                      <input
-                        className="lf-input lf-input-price"
-                        placeholder={categoryPriceInputs[cat.key] ? `${categoryPriceInputs[cat.key]} €` : "Prix"}
-                        inputMode="decimal"
-                        value={d.price ?? ""}
-                        onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
-                        title="Laisser vide pour utiliser le tarif par défaut de la catégorie"
-                      />
-                      <button
-                        className="lf-btn lf-btn-text"
-                        onClick={() => removeDishRow(cat.key, d.id)}
-                        aria-label={`Supprimer : ${cat.singular}`}
-                      >
-                        <X size={16} />
+                  {cat.key === "plat" ? (
+                    <>
+                      <p className="lf-subgroup-label">Plat du jour</p>
+                      {splitPlatGroups(traiteurCategories.plat).jour.map((d) => renderDishRow(cat, d))}
+                      <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, "jour")}>
+                        <Plus size={14} /> Ajouter un plat du jour
                       </button>
-                    </div>
-                  ))}
-                  <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key)}>
-                    <Plus size={14} /> Ajouter {cat.article} {cat.singular}
-                  </button>
+
+                      <p className="lf-subgroup-label" style={{ marginTop: 18 }}>
+                        Autres (Buddha Bowl, Sando...)
+                      </p>
+                      {splitPlatGroups(traiteurCategories.plat).autres.map((d) => renderDishRow(cat, d))}
+                      <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, "autres")}>
+                        <Plus size={14} /> Ajouter un autre plat
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {traiteurCategories[cat.key].map((d) => renderDishRow(cat, d))}
+                      <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key)}>
+                        <Plus size={14} /> Ajouter {cat.article} {cat.singular}
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
 
@@ -1192,40 +1361,101 @@ export default function LOiseauTraiteur() {
             )}
 
             <div className="lf-card">
+              <span className="lf-label">Catalogue desserts & boissons</span>
+              <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 16 }}>
+                Cette liste complète est reproposée automatiquement chaque jour, avec un prix fixe et verrouillé. Si un
+                article manque un jour, supprimez-le seulement dans le menu du jour (ci-dessus) — il reviendra tout seul le
+                lendemain. Modifiez-le ici uniquement pour un changement durable (nouvel article, prix qui change).
+              </p>
+              {["dessert", "boisson"].map((catKey) => (
+                <div className="lf-catsection" key={catKey}>
+                  <h3>{categoryLabel(catKey)}</h3>
+                  {catalogRows[catKey].map((d) => (
+                    <div className="lf-dishrow" key={d.id}>
+                      <input
+                        className="lf-input"
+                        placeholder={`Nom (${categorySingular(catKey)})`}
+                        value={d.name}
+                        onChange={(e) => updateCatalogField(catKey, d.id, "name", e.target.value)}
+                      />
+                      <input
+                        className="lf-input lf-input-price"
+                        placeholder="Prix"
+                        inputMode="decimal"
+                        value={d.price ?? ""}
+                        onChange={(e) => updateCatalogField(catKey, d.id, "price", e.target.value)}
+                      />
+                      <button
+                        className="lf-btn lf-btn-text"
+                        onClick={() => removeCatalogRow(catKey, d.id)}
+                        aria-label={`Retirer du catalogue : ${categorySingular(catKey)}`}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  <button className="lf-btn lf-btn-ghost" onClick={() => addCatalogRow(catKey)}>
+                    <Plus size={14} /> Ajouter au catalogue ({categorySingular(catKey)})
+                  </button>
+                </div>
+              ))}
+              <div className="lf-row" style={{ marginTop: 8 }}>
+                <button className="lf-btn lf-btn-primary" onClick={saveCatalogFn} disabled={catalogStatus === "saving"}>
+                  {catalogStatus === "saving" ? <Loader2 className="lf-spin" size={14} /> : null}
+                  Enregistrer le catalogue
+                </button>
+              </div>
+              {catalogStatus === "saved" && (
+                <p className="lf-status ok" style={{ marginTop: 10, marginBottom: 0 }}>
+                  <Check size={14} /> Catalogue enregistré — appliqué dès demain (les menus déjà publiés ne changent pas)
+                </p>
+              )}
+              {catalogStatus === "error" && (
+                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
+                  Indiquez un prix valide (0 ou plus) pour chaque article.
+                </p>
+              )}
+              {catalogStatus === "save-error" && (
+                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
+                  La sauvegarde a échoué, réessayez.
+                </p>
+              )}
+            </div>
+
+            <div className="lf-card">
               <span className="lf-label">Tarifs</span>
               <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
-                Tarif par défaut pour chaque catégorie (un plat précis peut avoir son propre prix, voir plus haut), plus le
-                prix de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
+                Tarif par défaut du plat (utilisé si un plat du jour ou un autre plat n'a pas de prix propre renseigné), plus
+                la remise de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
               </p>
               <div className="lf-row">
-                {CATEGORIES.map((c) => (
-                  <div key={c.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor={`price-${c.key}`}>
-                      {c.label}
-                    </label>
-                    <input
-                      id={`price-${c.key}`}
-                      className="lf-input"
-                      style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={categoryPriceInputs[c.key]}
-                      onChange={(e) => updatePriceField(c.key, e.target.value)}
-                    />
-                  </div>
-                ))}
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-formule">
-                    Formule plat+dessert+boisson
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-plat">
+                    Plat
                   </label>
                   <input
-                    id="price-formule"
+                    id="price-plat"
                     className="lf-input"
                     style={{ width: 90 }}
                     inputMode="decimal"
-                    placeholder="12,50"
-                    value={categoryPriceInputs.formule}
-                    onChange={(e) => updatePriceField("formule", e.target.value)}
+                    placeholder="9,00"
+                    value={categoryPriceInputs.plat}
+                    onChange={(e) => updatePriceField("plat", e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-remiseFormule">
+                    Remise formule (plat+dessert+boisson)
+                  </label>
+                  <input
+                    id="price-remiseFormule"
+                    className="lf-input"
+                    style={{ width: 90 }}
+                    inputMode="decimal"
+                    placeholder="0,50"
+                    value={categoryPriceInputs.remiseFormule}
+                    onChange={(e) => updatePriceField("remiseFormule", e.target.value)}
+                    title="Remise appliquée par ensemble complet plat+dessert+boisson commandé"
                   />
                 </div>
                 <button
