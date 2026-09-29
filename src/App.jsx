@@ -146,9 +146,13 @@ export default function LOiseauTraiteur() {
   const [menus, setMenus] = useState([]); // [{date, categories}]
   const [menusLoading, setMenusLoading] = useState(true);
   const [selectedOrderDate, setSelectedOrderDate] = useState("");
-  const [myOrder, setMyOrder] = useState(null); // undefined = loading, null = none, {selections,total}
-  const [busyCat, setBusyCat] = useState("");
-  const [orderSyncError, setOrderSyncError] = useState("");
+  const [myOrder, setMyOrder] = useState(null); // undefined = loading, null = none, {selections,total} — brouillon local
+  // savedSelectionsRef garde ce qui est réellement enregistré, pour détecter les modifications
+  // du brouillon non encore envoyées (orderDirty). orderSubmitStatus pilote les messages de
+  // confirmation sous les boutons Envoyer/Annuler.
+  const savedSelectionsRef = useRef(null);
+  const [orderDirty, setOrderDirty] = useState(false);
+  const [orderSubmitStatus, setOrderSubmitStatus] = useState("");
 
   // traiteur tab
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
@@ -237,11 +241,15 @@ export default function LOiseauTraiteur() {
   }
 
   // ---------- order loading ----------
+  // myOrder est désormais un brouillon local : les clics du médecin le modifient instantanément,
+  // mais rien n'est envoyé au traiteur tant qu'il n'a pas cliqué sur "Envoyer ma commande".
   useEffect(() => {
     let cancelled = false;
     async function run() {
       if (!selectedDoctor || !selectedOrderDate) {
         setMyOrder(null);
+        savedSelectionsRef.current = null;
+        setOrderDirty(false);
         return;
       }
       setMyOrder(undefined);
@@ -250,6 +258,8 @@ export default function LOiseauTraiteur() {
         if (cancelled) return;
         if (!data) {
           setMyOrder(null);
+          savedSelectionsRef.current = null;
+          setOrderDirty(false);
           return;
         }
         // normalise : d'anciennes commandes de test pouvaient stocker un seul plat par
@@ -259,9 +269,15 @@ export default function LOiseauTraiteur() {
           normalized[c.key] = selArray(data.selections && data.selections[c.key]);
         });
         setMyOrder({ selections: normalized, total: data.total });
+        savedSelectionsRef.current = normalized;
+        setOrderDirty(false);
       } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
-        if (!cancelled) setMyOrder(null);
+        if (!cancelled) {
+          setMyOrder(null);
+          savedSelectionsRef.current = null;
+          setOrderDirty(false);
+        }
       }
     }
     run();
@@ -296,21 +312,14 @@ export default function LOiseauTraiteur() {
     return rawTotal - savings;
   }
 
-  async function saveSelections(newSelections) {
+  // Met à jour uniquement le brouillon local (affichage immédiat) — rien n'est envoyé tant que
+  // le médecin n'a pas cliqué sur "Envoyer ma commande".
+  function updateDraftSelections(newSelections) {
     const total = computeTotal(newSelections);
     const hasAny = CATEGORIES.some((c) => (newSelections[c.key] || []).length > 0);
-    // affichage immédiat, la sauvegarde se fait ensuite
     setMyOrder(hasAny ? { selections: newSelections, total } : null);
-    try {
-      if (!hasAny) {
-        await api.deleteOrder(selectedOrderDate, selectedDoctor);
-      } else {
-        await api.saveOrder(selectedOrderDate, selectedDoctor, newSelections, total);
-      }
-    } catch (e) {
-      console.error("[L'Oiseau Traiteur] erreur:", e);
-      setOrderSyncError("Votre choix est affiché, mais la sauvegarde a peut-être échoué. Réessayez si besoin.");
-    }
+    setOrderDirty(true);
+    setOrderSubmitStatus("");
   }
 
   // Tarif par défaut applicable à un plat : pour "plat", ça dépend de sa sous-catégorie
@@ -324,10 +333,10 @@ export default function LOiseauTraiteur() {
   }
 
   // Ajoute ou retire un plat précis dans sa catégorie (plusieurs plats différents peuvent
-  // désormais coexister dans une même catégorie, ex: 1 eau + 2 coca).
-  async function toggleSelection(catKey, item) {
+  // désormais coexister dans une même catégorie, ex: 1 eau + 2 coca). Modifie seulement le
+  // brouillon local (voir submitOrder pour l'envoi effectif).
+  function toggleSelection(catKey, item) {
     if (!selectedDoctor || !selectedOrderDate) return;
-    setOrderSyncError("");
     const current = (myOrder && myOrder.selections) || {};
     const arr = current[catKey] || [];
     const exists = arr.some((x) => x.id === item.id);
@@ -338,35 +347,64 @@ export default function LOiseauTraiteur() {
     const newArr = exists
       ? arr.filter((x) => x.id !== item.id)
       : [...arr, { id: item.id, name: item.name, price, qty: 1 }];
-    const newSelections = { ...current, [catKey]: newArr };
-    setBusyCat(catKey);
-    await saveSelections(newSelections);
-    setBusyCat("");
+    updateDraftSelections({ ...current, [catKey]: newArr });
   }
 
-  // Change la quantité d'un plat déjà choisi (indépendamment des autres plats de la même catégorie).
-  async function updateItemQty(catKey, itemId, qty) {
+  // Change la quantité d'un plat déjà choisi (indépendamment des autres plats de la même
+  // catégorie). Modifie seulement le brouillon local.
+  function updateItemQty(catKey, itemId, qty) {
     const safeQty = Math.max(1, Math.min(2, qty));
     const current = (myOrder && myOrder.selections) || {};
     const arr = current[catKey] || [];
     const newArr = arr.map((x) => (x.id === itemId ? { ...x, qty: safeQty } : x));
-    const newSelections = { ...current, [catKey]: newArr };
-    setOrderSyncError("");
-    setBusyCat(catKey);
-    await saveSelections(newSelections);
-    setBusyCat("");
+    updateDraftSelections({ ...current, [catKey]: newArr });
   }
 
+  // Envoie le brouillon actuel au traiteur : enregistre (ou supprime, si le brouillon est vide)
+  // la commande dans Firestore.
+  async function submitOrder() {
+    if (!selectedDoctor || !selectedOrderDate) return;
+    if (selectedOrderDate < todayISO()) return; // sécurité : le bouton est normalement déjà désactivé
+    const selections = (myOrder && myOrder.selections) || emptyCategories();
+    const total = computeTotal(selections);
+    const hasAny = CATEGORIES.some((c) => (selections[c.key] || []).length > 0);
+    setOrderSubmitStatus("sending");
+    try {
+      if (!hasAny) {
+        await api.deleteOrder(selectedOrderDate, selectedDoctor);
+      } else {
+        await api.saveOrder(selectedOrderDate, selectedDoctor, selections, total);
+      }
+      savedSelectionsRef.current = hasAny ? selections : null;
+      setOrderDirty(false);
+      setOrderSubmitStatus("sent");
+    } catch (e) {
+      console.error("[L'Oiseau Traiteur] erreur:", e);
+      setOrderSubmitStatus("send-error");
+      return;
+    }
+    setTimeout(() => setOrderSubmitStatus(""), 2500);
+  }
+
+  // Annule entièrement la commande (brouillon ET ce qui est enregistré côté traiteur, le cas
+  // échéant) — irréversible, une confirmation est demandée.
   async function cancelOrder() {
     if (!selectedDoctor || !selectedOrderDate) return;
-    setOrderSyncError("");
-    setMyOrder(null);
+    if (selectedOrderDate < todayISO()) return; // sécurité : le bouton est normalement déjà désactivé
+    if (!window.confirm("Annuler entièrement votre commande pour ce jour ? Cette action est irréversible.")) return;
+    setOrderSubmitStatus("cancelling");
     try {
       await api.deleteOrder(selectedOrderDate, selectedDoctor);
+      setMyOrder(null);
+      savedSelectionsRef.current = null;
+      setOrderDirty(false);
+      setOrderSubmitStatus("cancelled");
     } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
-      setOrderSyncError("L'annulation est affichée, mais n'a peut-être pas été enregistrée.");
+      setOrderSubmitStatus("cancel-error");
+      return;
     }
+    setTimeout(() => setOrderSubmitStatus(""), 2500);
   }
 
   // Catégories par défaut pour un jour sans menu enregistré : desserts/boissons repartent du
@@ -721,6 +759,9 @@ export default function LOiseauTraiteur() {
   const orderTotal = myOrder && myOrder.total ? myOrder.total : 0;
   // Un menu dont la date est déjà passée ne peut plus être supprimé (on garde l'historique).
   const isPastMenuDate = traiteurDate < todayISO();
+  // Une commande dont la date est déjà passée ne peut plus être annulée (la facturation ne doit
+  // pas pouvoir être modifiée après coup).
+  const isPastOrderDate = selectedOrderDate < todayISO();
   const orderSummaryText =
     myOrder && myOrder.selections
       ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
@@ -1127,9 +1168,16 @@ export default function LOiseauTraiteur() {
                           <Loader2 className="lf-spin" size={16} />
                         ) : myOrder && orderSummaryText ? (
                           <>
-                            <span className="lf-status ok">
-                              <Check size={14} /> Commande enregistrée — {orderSummaryText}
-                            </span>
+                            {orderDirty ? (
+                              <span style={{ fontSize: 13.5 }}>
+                                Sélection : {orderSummaryText}{" "}
+                                <span style={{ color: "var(--coral)", fontWeight: 600 }}>— non envoyée</span>
+                              </span>
+                            ) : (
+                              <span className="lf-status ok">
+                                <Check size={14} /> Commande envoyée — {orderSummaryText}
+                              </span>
+                            )}
                             {formulaInfo.applies && (
                               <>
                                 <br />
@@ -1138,10 +1186,6 @@ export default function LOiseauTraiteur() {
                                 </span>
                               </>
                             )}
-                            <br />
-                            <button className="lf-btn lf-btn-text" onClick={cancelOrder} style={{ paddingLeft: 0, marginTop: 4 }}>
-                              Annuler toute la commande
-                            </button>
                           </>
                         ) : (
                           <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
@@ -1151,8 +1195,48 @@ export default function LOiseauTraiteur() {
                       </div>
                       <div className="lf-ordersummary-total">{formatEuro(orderTotal)}</div>
                     </div>
-                    {orderSyncError && (
-                      <p style={{ fontSize: 12.5, color: "var(--coral)", marginTop: 10, marginBottom: 0 }}>{orderSyncError}</p>
+
+                    {myOrder && orderSummaryText && (
+                      <div className="lf-row" style={{ marginTop: 10 }}>
+                        <button
+                          className="lf-btn lf-btn-primary"
+                          onClick={submitOrder}
+                          disabled={
+                            !orderDirty ||
+                            orderSubmitStatus === "sending" ||
+                            orderSubmitStatus === "cancelling" ||
+                            isPastOrderDate
+                          }
+                          title={isPastOrderDate ? "Une commande dont la date est passée ne peut plus être envoyée" : undefined}
+                        >
+                          {orderSubmitStatus === "sending" ? <Loader2 className="lf-spin" size={14} /> : null}
+                          Envoyer ma commande
+                        </button>
+                        <button
+                          className="lf-btn lf-btn-danger"
+                          onClick={cancelOrder}
+                          disabled={orderSubmitStatus === "sending" || orderSubmitStatus === "cancelling" || isPastOrderDate}
+                          title={isPastOrderDate ? "Une commande dont la date est passée ne peut plus être annulée" : undefined}
+                        >
+                          {orderSubmitStatus === "cancelling" ? <Loader2 className="lf-spin" size={14} /> : null}
+                          Annuler ma commande
+                        </button>
+                      </div>
+                    )}
+                    {orderSubmitStatus === "send-error" && (
+                      <p style={{ fontSize: 12.5, color: "var(--coral)", marginTop: 8, marginBottom: 0 }}>
+                        L'envoi a échoué, réessayez.
+                      </p>
+                    )}
+                    {orderSubmitStatus === "cancelled" && (
+                      <p className="lf-status ok" style={{ marginTop: 8, marginBottom: 0 }}>
+                        Commande annulée
+                      </p>
+                    )}
+                    {orderSubmitStatus === "cancel-error" && (
+                      <p style={{ fontSize: 12.5, color: "var(--coral)", marginTop: 8, marginBottom: 0 }}>
+                        L'annulation a échoué, réessayez.
+                      </p>
                     )}
                   </>
                 )}
