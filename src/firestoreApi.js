@@ -19,15 +19,6 @@ export async function saveDoctors(names) {
   await setDoc(doc(db, "meta", "doctors"), { names });
 }
 
-// ---------- tarifs par catégorie ----------
-export async function getCategoryPrices() {
-  const snap = await getDoc(doc(db, "meta", "categoryPrices"));
-  return snap.exists() ? snap.data() : { entree: 0, plat: 0, dessert: 0, boisson: 0 };
-}
-export async function saveCategoryPrices(prices) {
-  await setDoc(doc(db, "meta", "categoryPrices"), prices);
-}
-
 // ---------- menus ----------
 export async function getMenu(date) {
   const snap = await getDoc(doc(db, "menus", date));

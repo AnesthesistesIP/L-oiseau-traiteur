@@ -161,15 +161,9 @@ export default function LOiseauTraiteur() {
   // propre renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
   // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant la
   // proposition, donc pas besoin d'un tarif par défaut pour ces catégories.
+  // Valeurs fixes dans le code — pour les changer, modifier directement ici (plus d'édition possible
+  // depuis l'interface).
   const categoryPricesRef = useRef({ platJour: 9, buddha: 9, salade: 7, sando: 7.5, remiseFormule: 0.5 });
-  const [categoryPriceInputs, setCategoryPriceInputs] = useState({
-    platJour: "",
-    buddha: "",
-    salade: "",
-    sando: "",
-    remiseFormule: "",
-  });
-  const [priceStatus, setPriceStatus] = useState("");
   // vue "commandes reçues" pour le traiteur, indépendante du jour dont on édite le menu
   const [ordersViewDate, setOrdersViewDate] = useState("");
   const [dayOrders, setDayOrders] = useState([]);
@@ -194,24 +188,6 @@ export default function LOiseauTraiteur() {
       setDoctorsLoaded(true);
     })();
 
-    (async () => {
-      try {
-        const raw = await api.getCategoryPrices();
-        // Repli sur les valeurs par défaut si rien n'est encore enregistré dans Firestore.
-        const next = { platJour: 9, buddha: 9, salade: 7, sando: 7.5, remiseFormule: 0.5, ...raw };
-        categoryPricesRef.current = next;
-        setCategoryPriceInputs({
-          platJour: String(next.platJour ?? ""),
-          buddha: String(next.buddha ?? ""),
-          salade: String(next.salade ?? ""),
-          sando: String(next.sando ?? ""),
-          remiseFormule: String(next.remiseFormule ?? ""),
-        });
-      } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
-        /* garde les valeurs par défaut */
-      }
-    })();
     loadMenus();
   }, []);
 
@@ -483,8 +459,8 @@ export default function LOiseauTraiteur() {
   // pour les plats : platJour, buddha, salade ou sando).
   function defaultPriceLabel(cat, d) {
     const priceKey = cat.key === "plat" && d.group && platSubcat(d.group) ? platSubcat(d.group).priceKey : cat.key;
-    const val = categoryPriceInputs[priceKey];
-    return val || "Prix";
+    const val = categoryPricesRef.current[priceKey];
+    return val != null ? String(val) : "Prix";
   }
   function renderDishRow(cat, d) {
     return (
@@ -590,35 +566,6 @@ export default function LOiseauTraiteur() {
       return;
     }
     setTimeout(() => setTraiteurStatus(""), 2000);
-  }
-
-  function updatePriceField(catKey, value) {
-    setCategoryPriceInputs((prev) => ({ ...prev, [catKey]: value }));
-  }
-
-  async function savePrices() {
-    const cleaned = {};
-    let valid = true;
-    const keys = ["platJour", "buddha", "salade", "sando", "remiseFormule"];
-    keys.forEach((key) => {
-      const n = parseFloat(String(categoryPriceInputs[key]).replace(",", "."));
-      if (isNaN(n) || n < 0) valid = false;
-      cleaned[key] = isNaN(n) ? 0 : n;
-    });
-    if (!valid) {
-      setPriceStatus("error");
-      return;
-    }
-    setPriceStatus("saving");
-    categoryPricesRef.current = cleaned;
-    try {
-      await api.saveCategoryPrices(cleaned);
-      setPriceStatus("saved");
-    } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
-      setPriceStatus("save-error");
-    }
-    setTimeout(() => setPriceStatus(""), 2000);
   }
 
   // ---------- commandes du jour (vue traiteur) ----------
@@ -983,7 +930,7 @@ export default function LOiseauTraiteur() {
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; }
         .lf-input-price { width: 90px; flex: none; }
-        .lf-price-field { position: relative; display: inline-flex; flex: none; }
+        .lf-price-field { position: relative; display: inline-flex; flex: none; align-self: flex-start; }
         .lf-price-field input { padding-right: 24px; }
         .lf-price-field .lf-price-suffix {
           position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
@@ -1415,12 +1362,10 @@ export default function LOiseauTraiteur() {
                   <div className="lf-price-field">
                     <input
                       id="price-platJour"
-                      className="lf-input"
+                      className="lf-input lf-input-locked"
                       style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="9,00"
-                      value={categoryPriceInputs.platJour}
-                      onChange={(e) => updatePriceField("platJour", e.target.value)}
+                      value={categoryPricesRef.current.platJour}
+                      disabled
                     />
                     <span className="lf-price-suffix">€</span>
                   </div>
@@ -1432,12 +1377,10 @@ export default function LOiseauTraiteur() {
                   <div className="lf-price-field">
                     <input
                       id="price-buddha"
-                      className="lf-input"
+                      className="lf-input lf-input-locked"
                       style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="9,00"
-                      value={categoryPriceInputs.buddha}
-                      onChange={(e) => updatePriceField("buddha", e.target.value)}
+                      value={categoryPricesRef.current.buddha}
+                      disabled
                     />
                     <span className="lf-price-suffix">€</span>
                   </div>
@@ -1449,12 +1392,10 @@ export default function LOiseauTraiteur() {
                   <div className="lf-price-field">
                     <input
                       id="price-salade"
-                      className="lf-input"
+                      className="lf-input lf-input-locked"
                       style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="7,00"
-                      value={categoryPriceInputs.salade}
-                      onChange={(e) => updatePriceField("salade", e.target.value)}
+                      value={categoryPricesRef.current.salade}
+                      disabled
                     />
                     <span className="lf-price-suffix">€</span>
                   </div>
@@ -1466,12 +1407,10 @@ export default function LOiseauTraiteur() {
                   <div className="lf-price-field">
                     <input
                       id="price-sando"
-                      className="lf-input"
+                      className="lf-input lf-input-locked"
                       style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="7,50"
-                      value={categoryPriceInputs.sando}
-                      onChange={(e) => updatePriceField("sando", e.target.value)}
+                      value={categoryPricesRef.current.sando}
+                      disabled
                     />
                     <span className="lf-price-suffix">€</span>
                   </div>
@@ -1483,42 +1422,16 @@ export default function LOiseauTraiteur() {
                   <div className="lf-price-field">
                     <input
                       id="price-remiseFormule"
-                      className="lf-input"
+                      className="lf-input lf-input-locked"
                       style={{ width: 90 }}
-                      inputMode="decimal"
-                      placeholder="0,50"
-                      value={categoryPriceInputs.remiseFormule}
-                      onChange={(e) => updatePriceField("remiseFormule", e.target.value)}
+                      value={categoryPricesRef.current.remiseFormule}
+                      disabled
                       title="Remise appliquée par ensemble complet plat+dessert+boisson commandé"
                     />
                     <span className="lf-price-suffix">€</span>
                   </div>
                 </div>
-                <button
-                  className="lf-btn lf-btn-primary"
-                  onClick={savePrices}
-                  disabled={priceStatus === "saving"}
-                  style={{ alignSelf: "flex-end" }}
-                >
-                  {priceStatus === "saving" ? <Loader2 className="lf-spin" size={14} /> : null}
-                  Enregistrer les tarifs
-                </button>
               </div>
-              {priceStatus === "saved" && (
-                <p className="lf-status ok" style={{ marginTop: 10, marginBottom: 0 }}>
-                  <Check size={14} /> Tarifs enregistrés
-                </p>
-              )}
-              {priceStatus === "error" && (
-                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
-                  Indiquez un prix valide (0 ou plus) pour chaque champ.
-                </p>
-              )}
-              {priceStatus === "save-error" && (
-                <p className="lf-status err" style={{ marginTop: 10, marginBottom: 0 }}>
-                  La sauvegarde a échoué, réessayez.
-                </p>
-              )}
             </div>
           </div>
         )}
