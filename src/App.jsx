@@ -1007,7 +1007,7 @@ export default function LOiseauTraiteur() {
         .lf-empty-title { font-family: 'Cormorant Garamond', serif; font-size: 18px; color: var(--ink); margin: 0 0 6px; font-weight: 600; }
 
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
-        .lf-dishrow .lf-input:first-child { flex: 1; }
+        .lf-dishrow .lf-input:first-child { flex: 1; min-width: 0; }
         .lf-input-price { width: 90px; flex: none; }
         .lf-price-field { position: relative; display: inline-flex; flex: none; align-self: flex-start; }
         .lf-price-field input { padding-right: 24px; }
