@@ -165,11 +165,19 @@ export default function LOiseauTraiteur() {
   const catalogRef = useRef(seedCatalog());
   // Tarif par défaut de chaque sous-catégorie de Plats (utilisé si une ligne n'a pas de prix
   // propre renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
-  // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant la
-  // proposition, donc pas besoin d'un tarif par défaut pour ces catégories.
+  // commandé (1,20€, avec un plafond de 3€ sur le prix du dessert pris en compte — voir
+  // computeFormulaInfo). Entrées, desserts et boissons ont toujours un prix renseigné directement
+  // devant la proposition, donc pas besoin d'un tarif par défaut pour ces catégories.
   // Valeurs fixes dans le code — pour les changer, modifier directement ici (plus d'édition possible
   // depuis l'interface).
-  const categoryPricesRef = useRef({ platJour: 9, buddha: 9, salade: 7, sando: 7.5, remiseFormule: 0.5 });
+  const categoryPricesRef = useRef({
+    platJour: 9,
+    buddha: 9,
+    salade: 7,
+    sando: 7.5,
+    remiseFormule: 1.2,
+    remiseFormuleDessertPlafond: 3,
+  });
   // vue "commandes reçues" pour le traiteur, indépendante du jour dont on édite le menu
   const [ordersViewDate, setOrdersViewDate] = useState("");
   const [dayOrders, setDayOrders] = useState([]);
@@ -286,21 +294,44 @@ export default function LOiseauTraiteur() {
     };
   }, [selectedDoctor, selectedOrderDate]);
 
-  // Calcule, pour une commande donnée, combien de fois la formule plat + dessert + boisson
-  // s'applique (uniquement sur les plats au tarif par défaut : un plat à prix spécial reste
-  // facturé à son propre tarif, en plus de la formule), et l'économie que ça représente.
-  // Compte, pour une commande donnée, combien d'ensembles complets "1 plat + 1 dessert + 1
-  // boisson" elle contient (peu importe leurs prix respectifs), et applique une remise
-  // forfaitaire par ensemble complet — ex: 2 plats + 2 desserts + 2 boissons = 2 ensembles
-  // = 2 fois la remise (utile pour une garde avec 2 repas commandés le même jour).
+  // Règle réelle du traiteur pour la formule plat + dessert + boisson (vérifiée sur ses tarifs
+  // pratiqués) : prix formule = plat + MAX(dessert, plafond) + boisson − remise. Un dessert à
+  // 3€ ou moins (ex: fromage blanc à 2,50€) compte pour "plafond" (3€) — le prix ne descend pas
+  // en dessous du palier ; un dessert plus cher compte pour son vrai prix, et le prix formule
+  // grimpe d'autant.
   function computeFormulaInfo(selections) {
-    function unitsCount(key) {
-      return (selections[key] || []).reduce((s, it) => s + (it.qty || 1), 0);
+    function expandUnits(key) {
+      const units = [];
+      (selections[key] || []).forEach((it) => {
+        for (let i = 0; i < (it.qty || 1); i++) units.push(it);
+      });
+      return units;
     }
-    const setsCount = Math.min(unitsCount("plat"), unitsCount("dessert"), unitsCount("boisson"));
+    const platUnits = expandUnits("plat");
+    // Trié du dessert le plus cher au moins cher : s'il y a plus de desserts que d'ensembles
+    // possibles (ex: 1 plat + 2 desserts + 1 boisson), on fait toujours entrer dans la formule
+    // le(s) dessert(s) le(s) plus proche(s) du plafond (donc le moins "gaspillé" par celui-ci),
+    // et le dessert le moins cher reste facturé à part à son propre prix — c'est toujours la
+    // répartition la plus avantageuse pour le client, quel que soit l'ordre de sélection.
+    const dessertUnits = expandUnits("dessert").sort((a, b) => (b.price || 0) - (a.price || 0));
+    const boissonUnits = expandUnits("boisson");
+    const setsCount = Math.min(platUnits.length, dessertUnits.length, boissonUnits.length);
+    if (setsCount === 0) return { applies: false, setsCount: 0, savings: 0 };
+
     const remise = categoryPricesRef.current.remiseFormule || 0;
-    const applies = setsCount > 0 && remise > 0;
-    return { applies, setsCount, savings: applies ? setsCount * remise : 0 };
+    const plafondDessert = categoryPricesRef.current.remiseFormuleDessertPlafond || 0;
+
+    let normalSum = 0;
+    let formulaSum = 0;
+    for (let i = 0; i < setsCount; i++) {
+      const plat = platUnits[i];
+      const dessert = dessertUnits[i];
+      const boisson = boissonUnits[i];
+      normalSum += (plat.price || 0) + (dessert.price || 0) + (boisson.price || 0);
+      const effectiveDessert = Math.max(dessert.price || 0, plafondDessert);
+      formulaSum += (plat.price || 0) + effectiveDessert + (boisson.price || 0) - remise;
+    }
+    return { applies: true, setsCount, savings: normalSum - formulaSum };
   }
 
   function computeTotal(selections) {
@@ -1124,8 +1155,8 @@ export default function LOiseauTraiteur() {
                     </p>
                     {categoryPricesRef.current.remiseFormule > 0 && (
                       <p className="lf-formula-note">
-                        💡 Formule plat + dessert + boisson : <strong>-{formatEuro(categoryPricesRef.current.remiseFormule)}</strong>{" "}
-                        sur le total dès qu'au moins 1 plat + 1 dessert + 1 boisson sont commandés.
+                        💡 Formule plat + dessert + boisson : réduction automatique sur le total dès qu'au moins 1 plat + 1
+                        dessert + 1 boisson sont commandés.
                       </p>
                     )}
 
