@@ -484,7 +484,7 @@ export default function LOiseauTraiteur() {
   function defaultPriceLabel(cat, d) {
     const priceKey = cat.key === "plat" && d.group && platSubcat(d.group) ? platSubcat(d.group).priceKey : cat.key;
     const val = categoryPriceInputs[priceKey];
-    return val ? `${val} €` : "Prix";
+    return val || "Prix";
   }
   function renderDishRow(cat, d) {
     return (
@@ -495,19 +495,22 @@ export default function LOiseauTraiteur() {
           value={d.name}
           onChange={(e) => updateDishField(cat.key, d.id, "name", e.target.value)}
         />
-        <input
-          className={`lf-input lf-input-price${d.fromCatalog ? " lf-input-locked" : ""}`}
-          placeholder={defaultPriceLabel(cat, d)}
-          inputMode="decimal"
-          value={d.price ?? ""}
-          onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
-          disabled={!!d.fromCatalog}
-          title={
-            d.fromCatalog
-              ? "Prix fixe (dessert/boisson) — non modifiable"
-              : "Laisser vide pour utiliser le tarif par défaut"
-          }
-        />
+        <div className="lf-price-field">
+          <input
+            className={`lf-input lf-input-price${d.fromCatalog ? " lf-input-locked" : ""}`}
+            placeholder={defaultPriceLabel(cat, d)}
+            inputMode="decimal"
+            value={d.price ?? ""}
+            onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
+            disabled={!!d.fromCatalog}
+            title={
+              d.fromCatalog
+                ? "Prix fixe (dessert/boisson) — non modifiable"
+                : "Laisser vide pour utiliser le tarif par défaut"
+            }
+          />
+          <span className="lf-price-suffix">€</span>
+        </div>
         <button
           className="lf-btn lf-btn-text"
           onClick={() => removeDishRow(cat.key, d.id)}
@@ -571,6 +574,7 @@ export default function LOiseauTraiteur() {
   }
 
   async function deleteMenuFn() {
+    if (traiteurDate < todayISO()) return; // sécurité : le bouton est normalement déjà désactivé
     if (!window.confirm(`Supprimer entièrement le menu du ${formatDateLong(traiteurDate)} ? Cette action est irréversible.`)) {
       return;
     }
@@ -761,6 +765,8 @@ export default function LOiseauTraiteur() {
   const currentMenu = menus.find((m) => m.date === selectedOrderDate);
   const activeCategories = currentMenu ? CATEGORIES.filter((c) => (currentMenu.categories[c.key] || []).length > 0) : [];
   const orderTotal = myOrder && myOrder.total ? myOrder.total : 0;
+  // Un menu dont la date est déjà passée ne peut plus être supprimé (on garde l'historique).
+  const isPastMenuDate = traiteurDate < todayISO();
   const orderSummaryText =
     myOrder && myOrder.selections
       ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
@@ -977,6 +983,12 @@ export default function LOiseauTraiteur() {
         .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; }
         .lf-input-price { width: 90px; flex: none; }
+        .lf-price-field { position: relative; display: inline-flex; flex: none; }
+        .lf-price-field input { padding-right: 24px; }
+        .lf-price-field .lf-price-suffix {
+          position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+          font-size: 13px; color: var(--ink-soft); pointer-events: none;
+        }
         .lf-input-locked { background: var(--line); color: var(--ink-soft); cursor: not-allowed; }
 
         .lf-status { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
@@ -1353,7 +1365,8 @@ export default function LOiseauTraiteur() {
                 <button
                   className="lf-btn lf-btn-danger"
                   onClick={deleteMenuFn}
-                  disabled={traiteurStatus === "saving" || traiteurStatus === "deleting"}
+                  disabled={traiteurStatus === "saving" || traiteurStatus === "deleting" || isPastMenuDate}
+                  title={isPastMenuDate ? "Un menu dont la date est passée ne peut plus être supprimé" : undefined}
                 >
                   {traiteurStatus === "deleting" ? <Loader2 className="lf-spin" size={14} /> : null}
                   Supprimer le menu
@@ -1386,11 +1399,6 @@ export default function LOiseauTraiteur() {
                   {menus.map((m) => (
                     <div key={m.date} className="lf-preview-item">
                       <span className="lf-preview-date">{formatDateLong(m.date)}</span>
-                      <span className="lf-preview-cats">
-                        {CATEGORIES.filter((c) => (m.categories[c.key] || []).length > 0)
-                          .map((c) => `${c.label} (${m.categories[c.key].length})`)
-                          .join(" · ")}
-                      </span>
                     </div>
                   ))}
                 </div>
@@ -1404,72 +1412,87 @@ export default function LOiseauTraiteur() {
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-platJour">
                     Plat du jour
                   </label>
-                  <input
-                    id="price-platJour"
-                    className="lf-input"
-                    style={{ width: 90 }}
-                    inputMode="decimal"
-                    placeholder="9,00"
-                    value={categoryPriceInputs.platJour}
-                    onChange={(e) => updatePriceField("platJour", e.target.value)}
-                  />
+                  <div className="lf-price-field">
+                    <input
+                      id="price-platJour"
+                      className="lf-input"
+                      style={{ width: 90 }}
+                      inputMode="decimal"
+                      placeholder="9,00"
+                      value={categoryPriceInputs.platJour}
+                      onChange={(e) => updatePriceField("platJour", e.target.value)}
+                    />
+                    <span className="lf-price-suffix">€</span>
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-buddha">
                     Buddha Bowl
                   </label>
-                  <input
-                    id="price-buddha"
-                    className="lf-input"
-                    style={{ width: 90 }}
-                    inputMode="decimal"
-                    placeholder="9,00"
-                    value={categoryPriceInputs.buddha}
-                    onChange={(e) => updatePriceField("buddha", e.target.value)}
-                  />
+                  <div className="lf-price-field">
+                    <input
+                      id="price-buddha"
+                      className="lf-input"
+                      style={{ width: 90 }}
+                      inputMode="decimal"
+                      placeholder="9,00"
+                      value={categoryPriceInputs.buddha}
+                      onChange={(e) => updatePriceField("buddha", e.target.value)}
+                    />
+                    <span className="lf-price-suffix">€</span>
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-salade">
                     Salade
                   </label>
-                  <input
-                    id="price-salade"
-                    className="lf-input"
-                    style={{ width: 90 }}
-                    inputMode="decimal"
-                    placeholder="7,00"
-                    value={categoryPriceInputs.salade}
-                    onChange={(e) => updatePriceField("salade", e.target.value)}
-                  />
+                  <div className="lf-price-field">
+                    <input
+                      id="price-salade"
+                      className="lf-input"
+                      style={{ width: 90 }}
+                      inputMode="decimal"
+                      placeholder="7,00"
+                      value={categoryPriceInputs.salade}
+                      onChange={(e) => updatePriceField("salade", e.target.value)}
+                    />
+                    <span className="lf-price-suffix">€</span>
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-sando">
                     Sando
                   </label>
-                  <input
-                    id="price-sando"
-                    className="lf-input"
-                    style={{ width: 90 }}
-                    inputMode="decimal"
-                    placeholder="7,50"
-                    value={categoryPriceInputs.sando}
-                    onChange={(e) => updatePriceField("sando", e.target.value)}
-                  />
+                  <div className="lf-price-field">
+                    <input
+                      id="price-sando"
+                      className="lf-input"
+                      style={{ width: 90 }}
+                      inputMode="decimal"
+                      placeholder="7,50"
+                      value={categoryPriceInputs.sando}
+                      onChange={(e) => updatePriceField("sando", e.target.value)}
+                    />
+                    <span className="lf-price-suffix">€</span>
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-remiseFormule">
                     Remise formule (plat+dessert+boisson)
                   </label>
-                  <input
-                    id="price-remiseFormule"
-                    className="lf-input"
-                    style={{ width: 90 }}
-                    inputMode="decimal"
-                    placeholder="0,50"
-                    value={categoryPriceInputs.remiseFormule}
-                    onChange={(e) => updatePriceField("remiseFormule", e.target.value)}
-                    title="Remise appliquée par ensemble complet plat+dessert+boisson commandé"
-                  />
+                  <div className="lf-price-field">
+                    <input
+                      id="price-remiseFormule"
+                      className="lf-input"
+                      style={{ width: 90 }}
+                      inputMode="decimal"
+                      placeholder="0,50"
+                      value={categoryPriceInputs.remiseFormule}
+                      onChange={(e) => updatePriceField("remiseFormule", e.target.value)}
+                      title="Remise appliquée par ensemble complet plat+dessert+boisson commandé"
+                    />
+                    <span className="lf-price-suffix">€</span>
+                  </div>
                 </div>
                 <button
                   className="lf-btn lf-btn-primary"
