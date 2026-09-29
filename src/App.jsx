@@ -7,10 +7,22 @@ import * as api from "./firestoreApi.js";
 // fixes, est automatiquement reproposé chaque jour — voir catalogRef plus bas.
 const CATEGORIES = [
   { key: "entree", label: "Entrées", singular: "entrée", article: "une", recurring: false },
-  { key: "plat", label: "Plats du jour", singular: "plat", article: "un", recurring: false },
+  { key: "plat", label: "Plats", singular: "plat", article: "un", recurring: false },
   { key: "dessert", label: "Desserts", singular: "dessert", article: "un", recurring: true },
   { key: "boisson", label: "Boissons", singular: "boisson", article: "une", recurring: true },
 ];
+// Sous-catégories fixes de "Plats", chacune avec son propre tarif par défaut (priceKey, réglable
+// dans Tarifs). Les 2 "plat du jour" partagent le même tarif par défaut (platJour).
+const PLAT_SUBCATS = [
+  { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultName: "Viande ou Poisson : ", priceKey: "platJour" },
+  { key: "vegetarien", label: "Plat du jour — Végétarien", defaultName: "Végétarien : ", priceKey: "platJour" },
+  { key: "buddha", label: "Buddha Bowl", defaultName: "Buddha Bowl", priceKey: "buddha" },
+  { key: "salade", label: "Salade", defaultName: "Salade", priceKey: "salade" },
+  { key: "sando", label: "Sando", defaultName: "Sando", priceKey: "sando" },
+];
+function platSubcat(key) {
+  return PLAT_SUBCATS.find((s) => s.key === key);
+}
 function categoryLabel(key) {
   return (CATEGORIES.find((c) => c.key === key) || {}).label || key;
 }
@@ -31,15 +43,18 @@ function selArray(val) {
 function blankRow() {
   return { id: genId(), name: "", price: "" };
 }
-// Convertit un catalogue {dessert:[{id,name,price}], boisson:[...]} en lignes éditables
-// (prix en texte, pour les champs de saisie de la carte "Catalogue").
-// Sépare les plats en deux groupes d'affichage : "Plat du jour" et "Autres" (Buddha Bowl, Sando...).
-// Un plat sans groupe (ancien menu enregistré avant cette fonctionnalité) est traité comme "jour".
-function splitPlatGroups(dishes) {
-  const jour = [];
+// Répartit les plats dans leurs 5 sous-catégories fixes. Un plat dont le groupe ne correspond à
+// aucune sous-catégorie connue (ancien menu enregistré avant cette fonctionnalité) atterrit dans
+// "autres", affiché seulement s'il n'est pas vide.
+function splitPlatBySubcat(dishes) {
+  const buckets = {};
+  PLAT_SUBCATS.forEach((s) => (buckets[s.key] = []));
   const autres = [];
-  (dishes || []).forEach((d) => (d.group === "autres" ? autres : jour).push(d));
-  return { jour, autres };
+  (dishes || []).forEach((d) => {
+    if (buckets[d.group]) buckets[d.group].push(d);
+    else autres.push(d);
+  });
+  return { buckets, autres };
 }
 function defaultTraiteurCategories() {
   return { entree: [blankRow()], plat: [blankRow()], dessert: [blankRow()], boisson: [blankRow()] };
@@ -142,14 +157,16 @@ export default function LOiseauTraiteur() {
   // dessert/une boisson exceptionnel un jour donné, on l'ajoute simplement ce jour-là avec son
   // propre prix, sans toucher à cette liste fixe.
   const catalogRef = useRef(seedCatalog());
-  // Tarif par défaut du plat (utilisé si un "plat du jour" ou "autre" n'a pas de prix propre
-  // renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
-  // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant
-  // la proposition (catalogue pour desserts/boissons, saisie manuelle pour les entrées), donc
-  // pas besoin d'un tarif par défaut pour ces catégories.
-  const categoryPricesRef = useRef({ plat: 9, remiseFormule: 0.5 });
+  // Tarif par défaut de chaque sous-catégorie de Plats (utilisé si une ligne n'a pas de prix
+  // propre renseigné), + la remise forfaitaire appliquée par ensemble complet plat+dessert+boisson
+  // commandé. Entrées, desserts et boissons ont toujours un prix renseigné directement devant la
+  // proposition, donc pas besoin d'un tarif par défaut pour ces catégories.
+  const categoryPricesRef = useRef({ platJour: 9, buddha: 9, salade: 7, sando: 7.5, remiseFormule: 0.5 });
   const [categoryPriceInputs, setCategoryPriceInputs] = useState({
-    plat: "",
+    platJour: "",
+    buddha: "",
+    salade: "",
+    sando: "",
     remiseFormule: "",
   });
   const [priceStatus, setPriceStatus] = useState("");
@@ -181,10 +198,13 @@ export default function LOiseauTraiteur() {
       try {
         const raw = await api.getCategoryPrices();
         // Repli sur les valeurs par défaut si rien n'est encore enregistré dans Firestore.
-        const next = { plat: 9, remiseFormule: 0.5, ...raw };
+        const next = { platJour: 9, buddha: 9, salade: 7, sando: 7.5, remiseFormule: 0.5, ...raw };
         categoryPricesRef.current = next;
         setCategoryPriceInputs({
-          plat: String(next.plat ?? ""),
+          platJour: String(next.platJour ?? ""),
+          buddha: String(next.buddha ?? ""),
+          salade: String(next.salade ?? ""),
+          sando: String(next.sando ?? ""),
           remiseFormule: String(next.remiseFormule ?? ""),
         });
       } catch (e) {
@@ -315,6 +335,16 @@ export default function LOiseauTraiteur() {
     }
   }
 
+  // Tarif par défaut applicable à un plat : pour "plat", ça dépend de sa sous-catégorie
+  // (platJour, buddha, salade, sando) ; pour les autres catégories, pas de défaut plus précis.
+  function defaultPriceFor(catKey, dish) {
+    if (catKey === "plat" && dish && dish.group) {
+      const subcat = platSubcat(dish.group);
+      if (subcat) return categoryPricesRef.current[subcat.priceKey] || 0;
+    }
+    return categoryPricesRef.current[catKey] || 0;
+  }
+
   // Ajoute ou retire un plat précis dans sa catégorie (plusieurs plats différents peuvent
   // désormais coexister dans une même catégorie, ex: 1 eau + 2 coca).
   async function toggleSelection(catKey, item) {
@@ -324,9 +354,9 @@ export default function LOiseauTraiteur() {
     const arr = current[catKey] || [];
     const exists = arr.some((x) => x.id === item.id);
     // un plat avec un tarif propre garde ce tarif ; sinon on applique le tarif par défaut
-    // de la catégorie (le prix est figé au moment du choix, il ne bougera pas rétroactivement
-    // si le tarif change plus tard).
-    const price = item.price != null ? item.price : categoryPricesRef.current[catKey] || 0;
+    // de sa sous-catégorie (le prix est figé au moment du choix, il ne bougera pas
+    // rétroactivement si le tarif change plus tard).
+    const price = item.price != null ? item.price : defaultPriceFor(catKey, item);
     const newArr = exists
       ? arr.filter((x) => x.id !== item.id)
       : [...arr, { id: item.id, name: item.name, price, qty: 1 }];
@@ -402,13 +432,9 @@ export default function LOiseauTraiteur() {
               fromCatalog: true,
             }));
           } else if (c.key === "plat") {
-            // Il y a chaque jour un plat du jour viande/poisson et un plat du jour végétarien :
-            // ces 2 lignes sont pré-remplies pour éviter de les retaper, à compléter avec le
-            // détail du plat du jour.
-            next[c.key] = [
-              { id: genId(), name: "Viande ou Poisson : ", price: "", group: "jour" },
-              { id: genId(), name: "Végétarien : ", price: "", group: "jour" },
-            ];
+            // 5 sous-catégories fixes proposées chaque jour : les 2 "plat du jour" sont à
+            // compléter avec le détail du jour, les 3 autres sont déjà des plats nommés.
+            next[c.key] = PLAT_SUBCATS.map((s) => ({ id: genId(), name: s.defaultName, price: "", group: s.key }));
           } else {
             next[c.key] = [blankRow()];
           }
@@ -432,6 +458,13 @@ export default function LOiseauTraiteur() {
   }
   // Rendu d'une ligne de plat, réutilisé pour la liste simple et pour les deux sous-groupes
   // "Plat du jour" / "Autres" de la catégorie Plats.
+  // Texte du tarif par défaut à afficher en placeholder (tient compte de la sous-catégorie
+  // pour les plats : platJour, buddha, salade ou sando).
+  function defaultPriceLabel(cat, d) {
+    const priceKey = cat.key === "plat" && d.group && platSubcat(d.group) ? platSubcat(d.group).priceKey : cat.key;
+    const val = categoryPriceInputs[priceKey];
+    return val ? `${val} €` : "Prix";
+  }
   function renderDishRow(cat, d) {
     return (
       <div className="lf-dishrow" key={d.id}>
@@ -443,15 +476,15 @@ export default function LOiseauTraiteur() {
         />
         <input
           className={`lf-input lf-input-price${d.fromCatalog ? " lf-input-locked" : ""}`}
-          placeholder={categoryPriceInputs[cat.key] ? `${categoryPriceInputs[cat.key]} €` : "Prix"}
+          placeholder={defaultPriceLabel(cat, d)}
           inputMode="decimal"
           value={d.price ?? ""}
           onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
           disabled={!!d.fromCatalog}
           title={
             d.fromCatalog
-              ? "Prix fixé dans le catalogue — modifiable uniquement dans la carte « Catalogue »"
-              : "Laisser vide pour utiliser le tarif par défaut de la catégorie"
+              ? "Prix fixe (dessert/boisson) — non modifiable"
+              : "Laisser vide pour utiliser le tarif par défaut"
           }
         />
         <button
@@ -523,7 +556,7 @@ export default function LOiseauTraiteur() {
   async function savePrices() {
     const cleaned = {};
     let valid = true;
-    const keys = ["plat", "remiseFormule"];
+    const keys = ["platJour", "buddha", "salade", "sando", "remiseFormule"];
     keys.forEach((key) => {
       const n = parseFloat(String(categoryPriceInputs[key]).replace(",", "."));
       if (isNaN(n) || n < 0) valid = false;
@@ -702,7 +735,7 @@ export default function LOiseauTraiteur() {
   function renderDishCard(cat, dish) {
     const entry = ((myOrder && myOrder.selections && myOrder.selections[cat.key]) || []).find((x) => x.id === dish.id);
     const isSelected = !!entry;
-    const effectivePrice = dish.price != null ? dish.price : categoryPricesRef.current[cat.key] || 0;
+    const effectivePrice = dish.price != null ? dish.price : defaultPriceFor(cat.key, dish);
     return (
       <div
         key={dish.id}
@@ -1057,18 +1090,24 @@ export default function LOiseauTraiteur() {
                           </div>
                         );
                       }
-                      const { jour, autres } = splitPlatGroups(dishes);
+                      const { buckets, autres } = splitPlatBySubcat(dishes);
                       return (
                         <div className="lf-catsection" key={cat.key}>
                           <h3>{cat.label}</h3>
-                          {jour.length > 0 && <div className="lf-dishes">{jour.map((dish) => renderDishCard(cat, dish))}</div>}
+                          {PLAT_SUBCATS.map(
+                            (s) =>
+                              buckets[s.key].length > 0 && (
+                                <div key={s.key} style={{ marginBottom: 14 }}>
+                                  <p className="lf-subgroup-label">{s.label}</p>
+                                  <div className="lf-dishes">{buckets[s.key].map((dish) => renderDishCard(cat, dish))}</div>
+                                </div>
+                              )
+                          )}
                           {autres.length > 0 && (
-                            <>
-                              <p className="lf-subgroup-label" style={{ marginTop: 14 }}>
-                                Autres
-                              </p>
+                            <div>
+                              <p className="lf-subgroup-label">Autres</p>
                               <div className="lf-dishes">{autres.map((dish) => renderDishCard(cat, dish))}</div>
-                            </>
+                            </div>
                           )}
                         </div>
                       );
@@ -1227,18 +1266,28 @@ export default function LOiseauTraiteur() {
                   </div>
                   {cat.key === "plat" ? (
                     <>
-                      {splitPlatGroups(traiteurCategories.plat).jour.map((d) => renderDishRow(cat, d))}
-                      <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, "jour")}>
-                        <Plus size={14} /> Ajouter un plat du jour
-                      </button>
-
-                      <p className="lf-subgroup-label" style={{ marginTop: 18 }}>
-                        Autres (Buddha Bowl, Sando...)
-                      </p>
-                      {splitPlatGroups(traiteurCategories.plat).autres.map((d) => renderDishRow(cat, d))}
-                      <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, "autres")}>
-                        <Plus size={14} /> Ajouter un autre plat
-                      </button>
+                      {(() => {
+                        const { buckets, autres } = splitPlatBySubcat(traiteurCategories.plat);
+                        return (
+                          <>
+                            {PLAT_SUBCATS.map((s, i) => (
+                              <div key={s.key} style={{ marginTop: i === 0 ? 0 : 18 }}>
+                                <p className="lf-subgroup-label">{s.label}</p>
+                                {buckets[s.key].map((d) => renderDishRow(cat, d))}
+                                <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, s.key)}>
+                                  <Plus size={14} /> Ajouter ({s.label})
+                                </button>
+                              </div>
+                            ))}
+                            {autres.length > 0 && (
+                              <div style={{ marginTop: 18 }}>
+                                <p className="lf-subgroup-label">Autres</p>
+                                {autres.map((d) => renderDishRow(cat, d))}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </>
                   ) : (
                     <>
@@ -1294,22 +1343,64 @@ export default function LOiseauTraiteur() {
             <div className="lf-card">
               <span className="lf-label">Tarifs</span>
               <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
-                Tarif par défaut du plat (utilisé si un plat du jour ou un autre plat n'a pas de prix propre renseigné), plus
-                la remise de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
+                Tarif par défaut de chaque sous-catégorie de Plats (utilisé si une ligne n'a pas de prix propre renseigné),
+                plus la remise de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
               </p>
               <div className="lf-row">
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-plat">
-                    Plat
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-platJour">
+                    Plat du jour
                   </label>
                   <input
-                    id="price-plat"
+                    id="price-platJour"
                     className="lf-input"
                     style={{ width: 90 }}
                     inputMode="decimal"
                     placeholder="9,00"
-                    value={categoryPriceInputs.plat}
-                    onChange={(e) => updatePriceField("plat", e.target.value)}
+                    value={categoryPriceInputs.platJour}
+                    onChange={(e) => updatePriceField("platJour", e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-buddha">
+                    Buddha Bowl
+                  </label>
+                  <input
+                    id="price-buddha"
+                    className="lf-input"
+                    style={{ width: 90 }}
+                    inputMode="decimal"
+                    placeholder="9,00"
+                    value={categoryPriceInputs.buddha}
+                    onChange={(e) => updatePriceField("buddha", e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-salade">
+                    Salade
+                  </label>
+                  <input
+                    id="price-salade"
+                    className="lf-input"
+                    style={{ width: 90 }}
+                    inputMode="decimal"
+                    placeholder="7,00"
+                    value={categoryPriceInputs.salade}
+                    onChange={(e) => updatePriceField("salade", e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-sando">
+                    Sando
+                  </label>
+                  <input
+                    id="price-sando"
+                    className="lf-input"
+                    style={{ width: 90 }}
+                    inputMode="decimal"
+                    placeholder="7,50"
+                    value={categoryPriceInputs.sando}
+                    onChange={(e) => updatePriceField("sando", e.target.value)}
                   />
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
