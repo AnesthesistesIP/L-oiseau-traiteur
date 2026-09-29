@@ -14,8 +14,8 @@ const CATEGORIES = [
 // Sous-catégories fixes de "Plats", chacune avec son propre tarif par défaut (priceKey, réglable
 // dans Tarifs). Les 2 "plat du jour" partagent le même tarif par défaut (platJour).
 const PLAT_SUBCATS = [
-  { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultName: "Viande ou Poisson : ", priceKey: "platJour" },
-  { key: "vegetarien", label: "Plat du jour — Végétarien", defaultName: "Végétarien : ", priceKey: "platJour" },
+  { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultName: "PJ viande ou poisson", priceKey: "platJour" },
+  { key: "vegetarien", label: "Plat du jour — Végétarien", defaultName: "PJ végétarien:", priceKey: "platJour" },
   { key: "buddha", label: "Buddha Bowl", defaultName: "Buddha Bowl", priceKey: "buddha" },
   { key: "salade", label: "Salade", defaultName: "Salade", priceKey: "salade" },
   { key: "sando", label: "Sando", defaultName: "Sando", priceKey: "sando" },
