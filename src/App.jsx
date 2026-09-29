@@ -391,6 +391,27 @@ export default function LOiseauTraiteur() {
     }
   }
 
+  // Catégories par défaut pour un jour sans menu enregistré : desserts/boissons repartent du
+  // catalogue complet (prix verrouillé), Plats propose les 5 sous-catégories fixes.
+  function buildDefaultDayCategories() {
+    const next = {};
+    CATEGORIES.forEach((c) => {
+      if (c.recurring && catalogRef.current[c.key] && catalogRef.current[c.key].length) {
+        next[c.key] = catalogRef.current[c.key].map((d) => ({
+          id: genId(),
+          name: d.name,
+          price: d.price != null ? String(d.price) : "",
+          fromCatalog: true,
+        }));
+      } else if (c.key === "plat") {
+        next[c.key] = PLAT_SUBCATS.map((s) => ({ id: genId(), name: s.defaultName, price: "", group: s.key }));
+      } else {
+        next[c.key] = [blankRow()];
+      }
+    });
+    return next;
+  }
+
   // ---------- traiteur tab ----------
   useEffect(() => {
     (async () => {
@@ -439,27 +460,7 @@ export default function LOiseauTraiteur() {
         });
         setTraiteurCategories(next);
       } else {
-        // Nouveau jour sans menu enregistré : les catégories du catalogue (desserts, boissons)
-        // repartent toujours de la liste complète et à jour du catalogue, avec prix verrouillé —
-        // qu'elles aient été modifiées la veille ou non.
-        const next = {};
-        CATEGORIES.forEach((c) => {
-          if (c.recurring && catalogRef.current[c.key] && catalogRef.current[c.key].length) {
-            next[c.key] = catalogRef.current[c.key].map((d) => ({
-              id: genId(),
-              name: d.name,
-              price: d.price != null ? String(d.price) : "",
-              fromCatalog: true,
-            }));
-          } else if (c.key === "plat") {
-            // 5 sous-catégories fixes proposées chaque jour : les 2 "plat du jour" sont à
-            // compléter avec le détail du jour, les 3 autres sont déjà des plats nommés.
-            next[c.key] = PLAT_SUBCATS.map((s) => ({ id: genId(), name: s.defaultName, price: "", group: s.key }));
-          } else {
-            next[c.key] = [blankRow()];
-          }
-        });
-        setTraiteurCategories(next);
+        setTraiteurCategories(buildDefaultDayCategories());
       }
     })();
   }, [traiteurDate]);
@@ -563,9 +564,27 @@ export default function LOiseauTraiteur() {
       return;
     }
     // Le catalogue (desserts/boissons) ne change jamais suite à l'enregistrement d'un menu du
-    // jour : il reste la référence fixe, gérée séparément dans la carte "Catalogue".
+    // jour : c'est une liste fixe, indépendante des menus quotidiens.
     setTraiteurStatus("saved");
     loadMenus();
+    setTimeout(() => setTraiteurStatus(""), 2000);
+  }
+
+  async function deleteMenuFn() {
+    if (!window.confirm(`Supprimer entièrement le menu du ${formatDateLong(traiteurDate)} ? Cette action est irréversible.`)) {
+      return;
+    }
+    setTraiteurStatus("deleting");
+    try {
+      await api.deleteMenu(traiteurDate);
+      setTraiteurCategories(buildDefaultDayCategories());
+      setTraiteurStatus("deleted");
+      loadMenus();
+    } catch (e) {
+        console.error("[L'Oiseau Traiteur] erreur:", e);
+      setTraiteurStatus("delete-error");
+      return;
+    }
     setTimeout(() => setTraiteurStatus(""), 2000);
   }
 
@@ -883,6 +902,9 @@ export default function LOiseauTraiteur() {
         .lf-btn-primary:disabled { opacity: .5; cursor: not-allowed; }
         .lf-btn-ghost { background: transparent; color: var(--pine-dark); border-color: var(--line); }
         .lf-btn-ghost:hover { background: var(--pine-light); }
+        .lf-btn-danger { background: var(--coral); color: #fff; }
+        .lf-btn-danger:hover { background: #8c452f; }
+        .lf-btn-danger:disabled { opacity: .5; cursor: not-allowed; }
         .lf-btn-text { background: none; color: var(--ink-soft); padding: 6px 8px; }
         .lf-btn-text:hover { color: var(--coral); }
 
@@ -1320,23 +1342,39 @@ export default function LOiseauTraiteur() {
               ))}
 
               <div className="lf-row" style={{ marginTop: 6 }}>
-                <button className="lf-btn lf-btn-primary" onClick={saveMenu} disabled={traiteurStatus === "saving"}>
+                <button
+                  className="lf-btn lf-btn-primary"
+                  onClick={saveMenu}
+                  disabled={traiteurStatus === "saving" || traiteurStatus === "deleting"}
+                >
                   {traiteurStatus === "saving" ? <Loader2 className="lf-spin" size={14} /> : null}
-                  Enregistrer le menu
+                  Enregistrer et publier le menu
+                </button>
+                <button
+                  className="lf-btn lf-btn-danger"
+                  onClick={deleteMenuFn}
+                  disabled={traiteurStatus === "saving" || traiteurStatus === "deleting"}
+                >
+                  {traiteurStatus === "deleting" ? <Loader2 className="lf-spin" size={14} /> : null}
+                  Supprimer le menu
                 </button>
                 {traiteurStatus === "saved" && (
                   <span className="lf-status ok">
                     <Check size={14} /> Menu publié
                   </span>
                 )}
+                {traiteurStatus === "deleted" && <span className="lf-status ok">Menu supprimé</span>}
                 {traiteurStatus === "error" && (
                   <span className="lf-status err">Ajoutez au moins un plat avec un nom et un prix.</span>
                 )}
                 {traiteurStatus === "save-error" && (
                   <span className="lf-status err">
-                    La sauvegarde a échoué. Vos plats saisis sont conservés — cliquez à nouveau sur "Enregistrer le menu" pour
-                    réessayer.
+                    La sauvegarde a échoué. Vos plats saisis sont conservés — cliquez à nouveau sur "Enregistrer et publier le
+                    menu" pour réessayer.
                   </span>
+                )}
+                {traiteurStatus === "delete-error" && (
+                  <span className="lf-status err">La suppression a échoué, réessayez.</span>
                 )}
               </div>
             </div>

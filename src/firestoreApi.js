@@ -36,6 +36,9 @@ export async function getMenu(date) {
 export async function saveMenu(date, categories) {
   await setDoc(doc(db, "menus", date), { categories });
 }
+export async function deleteMenu(date) {
+  await deleteDoc(doc(db, "menus", date));
+}
 // Renvoie tous les menus dont la date (= l'id du document) est >= today, triés.
 export async function listUpcomingMenus(todayISO) {
   const snap = await getDocs(collection(db, "menus"));
