@@ -1154,13 +1154,10 @@ export default function LOiseauTraiteur() {
                 {currentMenu && (
                   <>
                     <p style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 0, marginBottom: 12 }}>
-                      Menu du {formatDateLong(currentMenu.date)} — plusieurs choix possibles par catégorie
+                      Menu du {formatDateLong(currentMenu.date)}
                     </p>
                     {categoryPricesRef.current.remiseFormule > 0 && (
-                      <p className="lf-formula-note">
-                        💡 Formule plat + dessert + boisson : réduction automatique sur le total dès qu'au moins 1 plat + 1
-                        dessert + 1 boisson sont commandés.
-                      </p>
+                      <p className="lf-formula-note">💡 Remise automatique en cas de Formule Plat + Dessert + Boisson</p>
                     )}
 
                     {activeCategories.map((cat) => {
@@ -1221,7 +1218,7 @@ export default function LOiseauTraiteur() {
                           </>
                         ) : (
                           <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>
-                            Aucune commande — cliquez sur un plat par catégorie pour choisir.
+                            Aucune commande — Faites votre choix et envoyez la commande
                           </span>
                         )}
                       </div>
