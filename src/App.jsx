@@ -408,13 +408,33 @@ export default function LOiseauTraiteur() {
         CATEGORIES.forEach((c) => {
           const arr = cats[c.key] || [];
           next[c.key] = arr.length
-            ? arr.map((d) => ({
-                id: d.id,
-                name: d.name,
-                price: d.price != null ? String(d.price) : "",
-                fromCatalog: !!d.fromCatalog,
-                group: d.group,
-              }))
+            ? arr.map((d) => {
+                // Pour desserts/boissons, si le nom correspond à un article du catalogue actuel,
+                // on recale toujours sur son prix et son verrouillage — même pour un jour déjà
+                // enregistré avant une correction du catalogue (plus besoin de cliquer sur
+                // "recharger le catalogue" à chaque fois).
+                if (c.recurring) {
+                  const catalogMatch = (catalogRef.current[c.key] || []).find(
+                    (cItem) => cItem.name.trim().toLowerCase() === (d.name || "").trim().toLowerCase()
+                  );
+                  if (catalogMatch) {
+                    return {
+                      id: d.id,
+                      name: d.name,
+                      price: String(catalogMatch.price),
+                      fromCatalog: true,
+                      group: d.group,
+                    };
+                  }
+                }
+                return {
+                  id: d.id,
+                  name: d.name,
+                  price: d.price != null ? String(d.price) : "",
+                  fromCatalog: !!d.fromCatalog,
+                  group: d.group,
+                };
+              })
             : [blankRow()];
         });
         setTraiteurCategories(next);
