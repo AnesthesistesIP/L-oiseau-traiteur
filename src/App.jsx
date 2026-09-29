@@ -877,7 +877,7 @@ export default function LOiseauTraiteur() {
 
         .lf-catsection { margin-bottom: 20px; }
         .lf-catsection h3 {
-          font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 600; margin: 0;
+          font-family: 'Cormorant Garamond', serif; font-size: 19px; font-weight: 600; margin: 0;
           color: var(--pine-dark);
         }
         .lf-dish-stepper {
@@ -895,7 +895,7 @@ export default function LOiseauTraiteur() {
         }
         .lf-catheader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
         .lf-subgroup-label {
-          font-family: 'Cormorant Garamond', serif; font-size: 13px; font-weight: 600; color: var(--ink-soft);
+          font-family: 'Cormorant Garamond', serif; font-size: 12px; font-weight: 600; color: var(--ink-soft);
           text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 8px;
         }
         .lf-recurring-hint {
@@ -1240,7 +1240,6 @@ export default function LOiseauTraiteur() {
                     <h3>{cat.label}</h3>
                     {cat.recurring && (
                       <span className="lf-recurring-hint">
-                        Catalogue complet repris automatiquement chaque jour — prix verrouillé
                         {catalogRef.current[cat.key] && catalogRef.current[cat.key].length ? (
                           <button
                             className="lf-btn lf-btn-text"
@@ -1275,7 +1274,7 @@ export default function LOiseauTraiteur() {
                                 <p className="lf-subgroup-label">{s.label}</p>
                                 {buckets[s.key].map((d) => renderDishRow(cat, d))}
                                 <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key, s.key)}>
-                                  <Plus size={14} /> Ajouter ({s.label})
+                                  <Plus size={14} /> Ajouter
                                 </button>
                               </div>
                             ))}
@@ -1293,7 +1292,7 @@ export default function LOiseauTraiteur() {
                     <>
                       {traiteurCategories[cat.key].map((d) => renderDishRow(cat, d))}
                       <button className="lf-btn lf-btn-ghost" onClick={() => addDishRow(cat.key)}>
-                        <Plus size={14} /> Ajouter {cat.article} {cat.singular}
+                        <Plus size={14} /> Ajouter
                       </button>
                     </>
                   )}
@@ -1342,11 +1341,7 @@ export default function LOiseauTraiteur() {
 
             <div className="lf-card">
               <span className="lf-label">Tarifs</span>
-              <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 0, marginBottom: 14 }}>
-                Tarif par défaut de chaque sous-catégorie de Plats (utilisé si une ligne n'a pas de prix propre renseigné),
-                plus la remise de la formule. Mémorisés une fois pour toutes — pas besoin de les ressaisir chaque jour.
-              </p>
-              <div className="lf-row">
+              <div className="lf-row" style={{ marginTop: 14 }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ fontSize: 12, color: "var(--ink-soft)" }} htmlFor="price-platJour">
                     Plat du jour
