@@ -890,7 +890,7 @@ export default function LOiseauTraiteur() {
         .lf-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .lf-header h1 {
           font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 32px; margin: 0;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.01em; color: #077266;
         }
         .lf-sub { margin: 2px 0 0; color: var(--ink-soft); font-size: 13.5px; }
 
@@ -1054,7 +1054,7 @@ export default function LOiseauTraiteur() {
           </div>
           <div>
             <h1>L'Oiseau Traiteur</h1>
-            <p className="lf-sub">Équipe d'anesthésie — commande du déjeuner &amp; résumé de facturation</p>
+            <p className="lf-sub">Équipe d'anesthésie de l'IP — commandes du déjeuner &amp; facturation</p>
           </div>
         </div>
 
