@@ -942,7 +942,7 @@ export default function LOiseauTraiteur() {
         .lf-btn-danger:disabled { opacity: .5; cursor: not-allowed; }
         .lf-btn-text { background: none; color: var(--ink-soft); padding: 6px 8px; }
         .lf-btn-text:hover { color: var(--coral); }
-        .lf-dish-delete { padding: 6px 2px; }
+        .lf-dish-delete { padding: 6px 0; }
 
         .lf-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
         .lf-pill {
@@ -1010,13 +1010,13 @@ export default function LOiseauTraiteur() {
         .lf-empty { text-align: center; padding: 34px 20px; color: var(--ink-soft); }
         .lf-empty-title { font-family: 'Cormorant Garamond', serif; font-size: 18px; color: var(--ink); margin: 0 0 6px; font-weight: 600; }
 
-        .lf-dishrow { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; }
+        .lf-dishrow { display: flex; gap: 4px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; min-width: 0; }
-        .lf-input-price { width: 64px; flex: none; text-align: right; }
+        .lf-input-price { width: 56px; flex: none; text-align: right; padding-left: 6px; }
         .lf-price-field { position: relative; display: inline-flex; flex: none; align-self: flex-start; }
-        .lf-price-field input { padding-right: 24px; }
+        .lf-price-field input { padding-right: 18px; }
         .lf-price-field .lf-price-suffix {
-          position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+          position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
           font-size: 13px; color: var(--ink-soft); pointer-events: none;
         }
         .lf-input-locked { background: var(--line); color: var(--ink-soft); cursor: not-allowed; }
