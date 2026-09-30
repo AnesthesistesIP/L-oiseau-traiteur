@@ -563,7 +563,7 @@ export default function LOiseauTraiteur() {
           <span className="lf-price-suffix">€</span>
         </div>
         <button
-          className="lf-btn lf-btn-text"
+          className="lf-btn lf-btn-text lf-dish-delete"
           onClick={() => removeDishRow(cat.key, d.id)}
           aria-label={`Supprimer : ${cat.singular}`}
         >
@@ -942,6 +942,7 @@ export default function LOiseauTraiteur() {
         .lf-btn-danger:disabled { opacity: .5; cursor: not-allowed; }
         .lf-btn-text { background: none; color: var(--ink-soft); padding: 6px 8px; }
         .lf-btn-text:hover { color: var(--coral); }
+        .lf-dish-delete { padding: 6px 2px; }
 
         .lf-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
         .lf-pill {
@@ -1009,7 +1010,7 @@ export default function LOiseauTraiteur() {
         .lf-empty { text-align: center; padding: 34px 20px; color: var(--ink-soft); }
         .lf-empty-title { font-family: 'Cormorant Garamond', serif; font-size: 18px; color: var(--ink); margin: 0 0 6px; font-weight: 600; }
 
-        .lf-dishrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+        .lf-dishrow { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; }
         .lf-dishrow .lf-input:first-child { flex: 1; min-width: 0; }
         .lf-input-price { width: 64px; flex: none; text-align: right; }
         .lf-price-field { position: relative; display: inline-flex; flex: none; align-self: flex-start; }
