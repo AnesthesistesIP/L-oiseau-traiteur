@@ -455,7 +455,12 @@ export default function LOiseauTraiteur() {
           fromCatalog: true,
         }));
       } else if (c.key === "plat") {
-        next[c.key] = PLAT_SUBCATS.map((s) => ({ id: genId(), name: s.defaultName, price: "", group: s.key }));
+        next[c.key] = PLAT_SUBCATS.map((s) => ({
+          id: genId(),
+          name: s.defaultName,
+          price: String(categoryPricesRef.current[s.priceKey] ?? ""),
+          group: s.key,
+        }));
       } else {
         next[c.key] = [blankRow()];
       }
@@ -499,6 +504,18 @@ export default function LOiseauTraiteur() {
                     };
                   }
                 }
+                // Idem pour les 5 sous-catégories de Plats (Viande/Poisson, Végétarien, Buddha
+                // Bowl, Salade, Sando) : leur prix est toujours recalé sur le tarif actuel, même
+                // pour un jour déjà enregistré avant un changement de tarif.
+                if (c.key === "plat" && d.group && platSubcat(d.group)) {
+                  const subcat = platSubcat(d.group);
+                  return {
+                    id: d.id,
+                    name: d.name,
+                    price: String(categoryPricesRef.current[subcat.priceKey] ?? ""),
+                    group: d.group,
+                  };
+                }
                 return {
                   id: d.id,
                   name: d.name,
@@ -523,10 +540,15 @@ export default function LOiseauTraiteur() {
     }));
   }
   function addDishRow(catKey, group) {
-    setTraiteurCategories((prev) => ({
-      ...prev,
-      [catKey]: [...prev[catKey], group ? { ...blankRow(), group } : blankRow()],
-    }));
+    setTraiteurCategories((prev) => {
+      let newRow = blankRow();
+      if (group) {
+        newRow = { ...newRow, group };
+        const subcat = catKey === "plat" ? platSubcat(group) : null;
+        if (subcat) newRow.price = String(categoryPricesRef.current[subcat.priceKey] ?? "");
+      }
+      return { ...prev, [catKey]: [...prev[catKey], newRow] };
+    });
   }
   // Rendu d'une ligne de plat, réutilisé pour la liste simple et pour les deux sous-groupes
   // "Plat du jour" / "Autres" de la catégorie Plats.
@@ -546,22 +568,30 @@ export default function LOiseauTraiteur() {
           value={d.name}
           onChange={(e) => updateDishField(cat.key, d.id, "name", e.target.value)}
         />
-        <div className="lf-price-field">
-          <input
-            className={`lf-input lf-input-price${d.fromCatalog ? " lf-input-locked" : ""}`}
-            placeholder={defaultPriceLabel(cat, d)}
-            inputMode="decimal"
-            value={d.price ?? ""}
-            onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
-            disabled={!!d.fromCatalog}
-            title={
-              d.fromCatalog
-                ? "Prix fixe (dessert/boisson) — non modifiable"
-                : "Laisser vide pour utiliser le tarif par défaut"
-            }
-          />
-          <span className="lf-price-suffix">€</span>
-        </div>
+        {(() => {
+          const platLocked = cat.key === "plat" && d.group && !!platSubcat(d.group);
+          const locked = !!d.fromCatalog || platLocked;
+          return (
+            <div className="lf-price-field">
+              <input
+                className={`lf-input lf-input-price${locked ? " lf-input-locked" : ""}`}
+                placeholder={defaultPriceLabel(cat, d)}
+                inputMode="decimal"
+                value={d.price ?? ""}
+                onChange={(e) => updateDishField(cat.key, d.id, "price", e.target.value)}
+                disabled={locked}
+                title={
+                  d.fromCatalog
+                    ? "Prix fixe (dessert/boisson) — non modifiable"
+                    : platLocked
+                    ? "Prix fixe (tarif Plats) — non modifiable"
+                    : "Laisser vide pour utiliser le tarif par défaut"
+                }
+              />
+              <span className="lf-price-suffix">€</span>
+            </div>
+          );
+        })()}
         <button
           className="lf-btn lf-btn-text lf-dish-delete"
           onClick={() => removeDishRow(cat.key, d.id)}
@@ -896,6 +926,11 @@ export default function LOiseauTraiteur() {
           letter-spacing: -0.01em; color: #077266;
         }
         .lf-sub { margin: 2px 0 0; color: var(--ink-soft); font-size: 13.5px; }
+        .lf-whatsapp-link {
+          display: inline-block; margin-top: 5px; font-size: 13px; font-weight: 700;
+          color: #F8C6D3; text-decoration: underline; text-underline-offset: 2px;
+        }
+        .lf-whatsapp-link:hover { color: #f2a9bf; }
 
         .lf-banner {
           background: var(--blush-light); border: 1px solid var(--blush); color: var(--ink);
@@ -1059,6 +1094,14 @@ export default function LOiseauTraiteur() {
           <div>
             <h1>L'Oiseau Traiteur</h1>
             <p className="lf-sub">Équipe d'anesthésie de l'IP — commandes du déjeuner &amp; facturation</p>
+            <a
+              className="lf-whatsapp-link"
+              href="https://chat.whatsapp.com/HG9uVk6norS4wlPfBhRBL5?s=cl&p=i&mlu=0&ilr=4"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Groupe WhatsApp
+            </a>
           </div>
         </div>
 
@@ -1073,10 +1116,10 @@ export default function LOiseauTraiteur() {
             Commander
           </button>
           <button className={`lf-tab ${tab === "traiteur" ? "active" : ""}`} onClick={() => setTab("traiteur")}>
-            Menu du traiteur
+            Menu du jour
           </button>
           <button className={`lf-tab ${tab === "resume" ? "active" : ""}`} onClick={() => setTab("resume")}>
-            Résumé mensuel
+            Facturation
           </button>
         </div>
 
