@@ -15,17 +15,24 @@ const CATEGORIES = [
 // Sous-catégories fixes de "Plats", chacune avec son propre tarif par défaut (priceKey, réglable
 // dans Tarifs). Les 2 "plat du jour" partagent le même tarif par défaut (platJour).
 const PLAT_SUBCATS = [
-  { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultName: "", priceKey: "platJour" },
-  { key: "vegetarien", label: "Plat du jour — Végétarien", defaultName: "", priceKey: "platJour" },
-  { key: "buddha", label: "Buddha Bowl", defaultName: "Buddha Bowl", priceKey: "buddha" },
-  { key: "salade", label: "Salade", defaultName: "Salade", priceKey: "salade" },
-  { key: "sando", label: "Sando", defaultName: "Sando", priceKey: "sando" },
+  { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultNames: [""], priceKey: "platJour" },
+  { key: "vegetarien", label: "Plat du jour — Végétarien", defaultNames: [""], priceKey: "platJour" },
+  { key: "buddha", label: "Buddha Bowl", defaultNames: ["Buddha Bowl"], priceKey: "buddha" },
+  { key: "salade", label: "Salade", defaultNames: ["Salade"], priceKey: "salade" },
+  {
+    key: "sando",
+    label: "Sando",
+    defaultNames: ["Sando poulet", "Sando truite gravlax", "Sando oeuf mimosa", "Sando thon bagnat"],
+    priceKey: "sando",
+  },
 ];
 function platSubcat(key) {
   return PLAT_SUBCATS.find((s) => s.key === key);
 }
 // Remise commerciale accordée par le traiteur, par personne, sur la facture du mois.
 const REMISE_COMMERCIALE_MENSUELLE = 5;
+const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/HG9uVk6norS4wlPfBhRBL5?s=cl&p=i&mlu=0&ilr=4";
+const APP_URL = "https://l-oiseau-traiteur.vercel.app";
 function categoryLabel(key) {
   return (CATEGORIES.find((c) => c.key === key) || {}).label || key;
 }
@@ -162,6 +169,11 @@ export default function LOiseauTraiteur() {
   const [traiteurDate, setTraiteurDate] = useState(tomorrowISO());
   const [traiteurCategories, setTraiteurCategories] = useState(defaultTraiteurCategories());
   const [traiteurStatus, setTraiteurStatus] = useState("");
+  // "Publier et annoncer" : le message est copié au clic, un bouton de secours reste affiché
+  // après publication au cas où l'ouverture automatique de WhatsApp serait bloquée (iPhone).
+  const [announceMessage, setAnnounceMessage] = useState("");
+  const [announceCopied, setAnnounceCopied] = useState(false);
+  const [showWhatsAppFallback, setShowWhatsAppFallback] = useState(false);
   // Catalogue fixe des desserts et boissons proposés chaque jour, avec leur prix verrouillé dans
   // le formulaire du menu quotidien. Liste figée dans le code (voir seedCatalog) : pour un
   // dessert/une boisson exceptionnel un jour donné, on l'ajoute simplement ce jour-là avec son
@@ -455,12 +467,14 @@ export default function LOiseauTraiteur() {
           fromCatalog: true,
         }));
       } else if (c.key === "plat") {
-        next[c.key] = PLAT_SUBCATS.map((s) => ({
-          id: genId(),
-          name: s.defaultName,
-          price: String(categoryPricesRef.current[s.priceKey] ?? ""),
-          group: s.key,
-        }));
+        next[c.key] = PLAT_SUBCATS.flatMap((s) =>
+          s.defaultNames.map((name) => ({
+            id: genId(),
+            name,
+            price: String(categoryPricesRef.current[s.priceKey] ?? ""),
+            group: s.key,
+          }))
+        );
       } else {
         next[c.key] = [blankRow()];
       }
@@ -472,6 +486,7 @@ export default function LOiseauTraiteur() {
   useEffect(() => {
     (async () => {
       setTraiteurStatus("");
+      setShowWhatsAppFallback(false);
       let menuData = null;
       try {
         menuData = await api.getMenu(traiteurDate);
@@ -609,7 +624,9 @@ export default function LOiseauTraiteur() {
     }));
   }
 
-  async function saveMenu() {
+  // Construit les catégories "propres" à partir du formulaire (mêmes règles de nettoyage que
+  // l'enregistrement), réutilisé à la fois pour sauvegarder et pour générer le message d'annonce.
+  function buildCleanedMenu() {
     const cleaned = {};
     let totalItems = 0;
     CATEGORIES.forEach((c) => {
@@ -633,9 +650,20 @@ export default function LOiseauTraiteur() {
       cleaned[c.key] = rows;
       totalItems += rows.length;
     });
+    return { cleaned, totalItems };
+  }
+
+  // Message prêt à coller dans le groupe WhatsApp — volontairement très court, avec la date pour
+  // rester clair en cas de publication de plusieurs jours à l'avance.
+  function buildAnnounceMessage() {
+    return `🐦 Menu du ${formatDateLong(traiteurDate)} publié\n${APP_URL}`;
+  }
+
+  async function saveMenu() {
+    const { cleaned, totalItems } = buildCleanedMenu();
     if (totalItems === 0) {
       setTraiteurStatus("error");
-      return;
+      return false;
     }
     setTraiteurStatus("saving");
     try {
@@ -645,13 +673,59 @@ export default function LOiseauTraiteur() {
       // on ne recharge pas les menus et on ne touche pas au formulaire : vos plats saisis restent
       // affichés pour que vous puissiez cliquer à nouveau sur "Enregistrer" sans tout retaper.
       setTraiteurStatus("save-error");
-      return;
+      return false;
     }
     // Le catalogue (desserts/boissons) ne change jamais suite à l'enregistrement d'un menu du
     // jour : c'est une liste fixe, indépendante des menus quotidiens.
     setTraiteurStatus("saved");
     loadMenus();
     setTimeout(() => setTraiteurStatus(""), 2000);
+    return true;
+  }
+
+  // Publie le menu ET prépare l'annonce WhatsApp en un seul geste : le message est copié dès
+  // l'appui (avant l'enregistrement Firestore) pour que Safari accepte la copie — un clic sur le
+  // bouton lui-même est requis par le navigateur, un copier plus tardif (après un await) est
+  // souvent refusé. Le menu est ensuite enregistré, puis WhatsApp est ouvert automatiquement ;
+  // si iPhone bloque cette ouverture, le bouton de secours "Annoncer sur WhatsApp" reste affiché.
+  async function publishAndAnnounce() {
+    const { cleaned, totalItems } = buildCleanedMenu();
+    if (totalItems === 0) {
+      setTraiteurStatus("error");
+      return;
+    }
+    const message = buildAnnounceMessage();
+    const clipboardPromise = navigator.clipboard ? navigator.clipboard.writeText(message) : Promise.reject();
+    let copied = true;
+    try {
+      await clipboardPromise;
+    } catch (e) {
+      copied = false;
+    }
+    setAnnounceMessage(message);
+    setAnnounceCopied(copied);
+
+    const ok = await saveMenu();
+    if (!ok) return;
+
+    setShowWhatsAppFallback(true);
+    try {
+      window.open(WHATSAPP_GROUP_URL, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      /* le bouton de secours reste affiché dans tous les cas */
+    }
+  }
+
+  // Bouton de secours : ce clic est un geste utilisateur "frais", donc la copie y réussit
+  // toujours, même si la copie automatique au moment de la publication avait échoué.
+  async function openWhatsAppFallback() {
+    try {
+      await navigator.clipboard.writeText(announceMessage);
+      setAnnounceCopied(true);
+    } catch (e) {
+      setAnnounceCopied(false);
+    }
+    window.open(WHATSAPP_GROUP_URL, "_blank", "noopener,noreferrer");
   }
 
   async function deleteMenuFn() {
@@ -931,6 +1005,12 @@ export default function LOiseauTraiteur() {
           color: #F8C6D3; text-decoration: underline; text-underline-offset: 2px;
         }
         .lf-whatsapp-link:hover { color: #f2a9bf; }
+        .lf-announce-box {
+          margin-top: 12px; padding: 12px 14px; background: var(--blush-light); border: 1px solid var(--blush);
+          border-radius: 10px;
+        }
+        .lf-whatsapp-btn { background: #F8C6D3; color: #6b2f42; }
+        .lf-whatsapp-btn:hover { background: #f2a9bf; }
 
         .lf-banner {
           background: var(--blush-light); border: 1px solid var(--blush); color: var(--ink);
@@ -1096,7 +1176,7 @@ export default function LOiseauTraiteur() {
             <p className="lf-sub">Équipe d'anesthésie de l'IP — commandes du déjeuner &amp; facturation</p>
             <a
               className="lf-whatsapp-link"
-              href="https://chat.whatsapp.com/HG9uVk6norS4wlPfBhRBL5?s=cl&p=i&mlu=0&ilr=4"
+              href={WHATSAPP_GROUP_URL}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -1470,11 +1550,11 @@ export default function LOiseauTraiteur() {
               <div className="lf-row" style={{ marginTop: 6 }}>
                 <button
                   className="lf-btn lf-btn-primary"
-                  onClick={saveMenu}
+                  onClick={publishAndAnnounce}
                   disabled={traiteurStatus === "saving" || traiteurStatus === "deleting"}
                 >
                   {traiteurStatus === "saving" ? <Loader2 className="lf-spin" size={14} /> : null}
-                  Enregistrer et publier le menu
+                  Publier et annoncer
                 </button>
                 <button
                   className="lf-btn lf-btn-danger"
@@ -1485,25 +1565,38 @@ export default function LOiseauTraiteur() {
                   {traiteurStatus === "deleting" ? <Loader2 className="lf-spin" size={14} /> : null}
                   Supprimer le menu
                 </button>
-                {traiteurStatus === "saved" && (
-                  <span className="lf-status ok">
-                    <Check size={14} /> Menu publié
-                  </span>
-                )}
                 {traiteurStatus === "deleted" && <span className="lf-status ok">Menu supprimé</span>}
                 {traiteurStatus === "error" && (
                   <span className="lf-status err">Ajoutez au moins un plat avec un nom et un prix.</span>
                 )}
                 {traiteurStatus === "save-error" && (
                   <span className="lf-status err">
-                    La sauvegarde a échoué. Vos plats saisis sont conservés — cliquez à nouveau sur "Enregistrer et publier le
-                    menu" pour réessayer.
+                    La sauvegarde a échoué. Vos plats saisis sont conservés — cliquez à nouveau sur "Publier et annoncer" pour
+                    réessayer.
                   </span>
                 )}
                 {traiteurStatus === "delete-error" && (
                   <span className="lf-status err">La suppression a échoué, réessayez.</span>
                 )}
               </div>
+
+              {traiteurStatus === "saved" && (
+                <div className="lf-announce-box">
+                  <span className="lf-status ok">
+                    <Check size={14} /> Menu publié
+                  </span>
+                  <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: "6px 0 10px" }}>
+                    {announceCopied
+                      ? "Message de l'annonce copié — collez-le dans le groupe WhatsApp qui vient de s'ouvrir."
+                      : "La copie automatique n'a pas fonctionné — cliquez ci-dessous pour réessayer."}
+                  </p>
+                  {showWhatsAppFallback && (
+                    <button className="lf-btn lf-whatsapp-btn" onClick={openWhatsAppFallback}>
+                      Annoncer sur WhatsApp
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {menus.length > 0 && (
