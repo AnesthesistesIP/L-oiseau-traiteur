@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Plus, X, Download, Check, Loader2, RotateCcw } from "lucide-react";
 import * as api from "./firestoreApi.js";
 import logoTraiteur from "./logo-traiteur.png";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 // ---------- constants ----------
 // "recurring: true" = catégorie dont le catalogue complet (desserts, boissons), avec des prix
@@ -145,6 +147,12 @@ function formatDateShort(iso) {
   const d = new Date(iso + "T00:00:00");
   const s = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
   return s.replace(".", "");
+}
+function formatMonthLong(monthISO) {
+  const [y, m] = monthISO.split("-").map(Number);
+  const d = new Date(y, m - 1, 1);
+  const s = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 function escapeCsv(s) {
   const str = String(s ?? "");
@@ -903,6 +911,55 @@ export default function LOiseauTraiteur() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  function exportPDF() {
+    const doc = new jsPDF();
+    const remiseTotal = REMISE_COMMERCIALE_MENSUELLE * grouped.length;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("L'Oiseau Traiteur — Équipe d'anesthésie de l'IP", 14, 18);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Résumé de facturation — ${formatMonthLong(summaryMonth)}`, 14, 26);
+
+    autoTable(doc, {
+      startY: 32,
+      head: [["Médecin", "Entrées", "Plats", "Desserts", "Boissons", "Total", "Remise", "Net à payer"]],
+      body: [
+        ...grouped.map((g) => [
+          g.doctor,
+          String(g.counts.entree || 0),
+          String(g.counts.plat || 0),
+          String(g.counts.dessert || 0),
+          String(g.counts.boisson || 0),
+          formatEuro(g.total),
+          `-${formatEuro(REMISE_COMMERCIALE_MENSUELLE)}`,
+          formatEuro(g.total - REMISE_COMMERCIALE_MENSUELLE),
+        ]),
+        [
+          "Total",
+          String(grandCounts.entree),
+          String(grandCounts.plat),
+          String(grandCounts.dessert),
+          String(grandCounts.boisson),
+          formatEuro(grandTotal),
+          `-${formatEuro(remiseTotal)}`,
+          formatEuro(grandTotal - remiseTotal),
+        ],
+      ],
+      headStyles: { fillColor: [46, 92, 82] }, // vert pin de la charte
+      didParseCell: (data) => {
+        // met la ligne de total en gras, qu'elle soit en dernière position du tableau
+        if (data.row.index === grouped.length && data.section === "body") {
+          data.cell.styles.fontStyle = "bold";
+        }
+      },
+      styles: { fontSize: 10 },
+    });
+
+    doc.save(`resume-repas-${summaryMonth}.pdf`);
   }
 
   const currentMenu = menus.find((m) => m.date === selectedOrderDate);
@@ -1712,6 +1769,9 @@ export default function LOiseauTraiteur() {
                 </div>
                 <button className="lf-btn lf-btn-primary" onClick={exportCSV} disabled={summaryRows.length === 0}>
                   <Download size={14} /> Export CSV
+                </button>
+                <button className="lf-btn lf-btn-ghost" onClick={exportPDF} disabled={summaryRows.length === 0}>
+                  <Download size={14} /> Export PDF
                 </button>
               </div>
             </div>
