@@ -656,7 +656,7 @@ export default function LOiseauTraiteur() {
   // Message prêt à coller dans le groupe WhatsApp — volontairement très court, avec la date pour
   // rester clair en cas de publication de plusieurs jours à l'avance.
   function buildAnnounceMessage() {
-    return `🐦 Menu du ${formatDateLong(traiteurDate)} publié\n${APP_URL}`;
+    return `🐦 Menu du ${formatDateLong(traiteurDate)} publié. Merci d'effectuer les commandes avant 11h00.\n${APP_URL}`;
   }
 
   async function saveMenu() {
