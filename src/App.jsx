@@ -85,6 +85,18 @@ function currentMonthISO() {
 function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
+// Réessaie une fois automatiquement en cas d'échec (certains réseaux mobiles ont un premier
+// appel réseau qui échoue ponctuellement après une période d'inactivité, puis fonctionnent
+// normalement ensuite) — évite d'obliger la personne à cliquer une seconde fois elle-même.
+async function withRetry(fn, retries = 1, delayMs = 500) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (retries <= 0) throw e;
+    await new Promise((r) => setTimeout(r, delayMs));
+    return withRetry(fn, retries - 1, delayMs);
+  }
+}
 // Catalogue de départ (utilisé uniquement si rien n'a encore été enregistré dans Firestore) :
 // la liste complète des desserts et boissons habituellement proposés, avec leurs prix fixes.
 function seedCatalog() {
@@ -418,9 +430,9 @@ export default function LOiseauTraiteur() {
     setOrderSubmitStatus("sending");
     try {
       if (!hasAny) {
-        await api.deleteOrder(selectedOrderDate, selectedDoctor);
+        await withRetry(() => api.deleteOrder(selectedOrderDate, selectedDoctor));
       } else {
-        await api.saveOrder(selectedOrderDate, selectedDoctor, selections, total);
+        await withRetry(() => api.saveOrder(selectedOrderDate, selectedDoctor, selections, total));
       }
       savedSelectionsRef.current = hasAny ? selections : null;
       setOrderDirty(false);
@@ -441,7 +453,7 @@ export default function LOiseauTraiteur() {
     if (!window.confirm("Annuler entièrement votre commande pour ce jour ? Cette action est irréversible.")) return;
     setOrderSubmitStatus("cancelling");
     try {
-      await api.deleteOrder(selectedOrderDate, selectedDoctor);
+      await withRetry(() => api.deleteOrder(selectedOrderDate, selectedDoctor));
       setMyOrder(null);
       savedSelectionsRef.current = null;
       setOrderDirty(false);
@@ -667,7 +679,7 @@ export default function LOiseauTraiteur() {
     }
     setTraiteurStatus("saving");
     try {
-      await api.saveMenu(traiteurDate, cleaned);
+      await withRetry(() => api.saveMenu(traiteurDate, cleaned));
     } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
       // on ne recharge pas les menus et on ne touche pas au formulaire : vos plats saisis restent
@@ -735,7 +747,7 @@ export default function LOiseauTraiteur() {
     }
     setTraiteurStatus("deleting");
     try {
-      await api.deleteMenu(traiteurDate);
+      await withRetry(() => api.deleteMenu(traiteurDate));
       setTraiteurCategories(buildDefaultDayCategories());
       setTraiteurStatus("deleted");
       loadMenus();
