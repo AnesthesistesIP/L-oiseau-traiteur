@@ -1076,6 +1076,11 @@ export default function LOiseauTraiteur() {
           color: #F8C6D3; text-decoration: underline; text-underline-offset: 2px;
         }
         .lf-whatsapp-link:hover { color: #f2a9bf; }
+        .lf-new-menu-alert {
+          margin-bottom: 16px; padding: 11px 16px; border-radius: 10px; font-weight: 700; font-size: 13.5px;
+          background: linear-gradient(90deg, #F8C6D3, var(--pine-light));
+          color: var(--pine-dark); border: 1px solid var(--pine);
+        }
         .lf-announce-box {
           margin-top: 12px; padding: 12px 14px; background: var(--blush-light); border: 1px solid var(--blush);
           border-radius: 10px;
@@ -1277,6 +1282,14 @@ export default function LOiseauTraiteur() {
         {/* ---------------- COMMANDER ---------------- */}
         {tab === "commander" && (
           <div>
+            {(() => {
+              const upcomingMenu = menus.find((m) => m.date > todayISO());
+              return (
+                upcomingMenu && (
+                  <div className="lf-new-menu-alert">Menu du {formatDateLong(upcomingMenu.date)} publié</div>
+                )
+              );
+            })()}
             <div className="lf-card">
               <span className="lf-label">Vous êtes</span>
               <div className="lf-row">
