@@ -20,7 +20,7 @@ const PLAT_SUBCATS = [
   { key: "viande", label: "Plat du jour — Viande ou Poisson", defaultNames: [""], priceKey: "platJour" },
   { key: "vegetarien", label: "Plat du jour — Végétarien", defaultNames: [""], priceKey: "platJour" },
   { key: "buddha", label: "Buddha Bowl", defaultNames: ["Buddha Bowl"], priceKey: "buddha" },
-  { key: "salade", label: "Salade", defaultNames: ["Salade"], priceKey: "salade" },
+  { key: "salade", label: "Salade", defaultNames: ["Salade au poulet", "Salade végétarienne"], priceKey: "salade" },
   {
     key: "sando",
     label: "Sando",
@@ -84,6 +84,21 @@ function tomorrowISO() {
 function currentMonthISO() {
   return todayISO().slice(0, 7);
 }
+// Heure (locale, pas UTC) à partir de laquelle une commande du jour même n'est plus modifiable.
+const ORDER_LOCK_HOUR = 9;
+// true si dateISO est une date passée, ou si c'est aujourd'hui et qu'il est déjà lockHour heures
+// passées en heure locale (contrairement à todayISO(), basé sur UTC et donc décalé de quelques
+// heures par rapport à l'heure réelle en France selon la saison).
+function isOrderLocked(dateISO, lockHour = ORDER_LOCK_HOUR) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const localToday = `${y}-${m}-${d}`;
+  if (dateISO < localToday) return true;
+  if (dateISO > localToday) return false;
+  return now.getHours() >= lockHour;
+}
 function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
@@ -120,6 +135,7 @@ function seedCatalog() {
       { name: "Fromage blanc crème de marrons", price: 2.5 },
       { name: "Bounty lait", price: 2.7 },
       { name: "Flan pâtissier pistache", price: 3.5 },
+      { name: "Brookie", price: 3.5 },
     ]),
     boisson: withIds([
       { name: "San Pellegrino", price: 2.2 },
@@ -250,7 +266,10 @@ export default function LOiseauTraiteur() {
       setMenus(filtered);
       setSelectedOrderDate((prev) => {
         if (prev && filtered.some((m) => m.date === prev)) return prev;
-        return filtered.length ? filtered[0].date : "";
+        // Le menu du jour même est déjà verrouillé (voir ORDER_LOCK_HOUR) : on privilégie le
+        // premier jour encore commandable, et seulement à défaut celui d'aujourd'hui.
+        const nextCommandable = filtered.find((m) => m.date > todayISO());
+        return nextCommandable ? nextCommandable.date : filtered.length ? filtered[0].date : "";
       });
     } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
@@ -420,7 +439,7 @@ export default function LOiseauTraiteur() {
   // Change la quantité d'un plat déjà choisi (indépendamment des autres plats de la même
   // catégorie). Modifie seulement le brouillon local.
   function updateItemQty(catKey, itemId, qty) {
-    const safeQty = Math.max(1, Math.min(2, qty));
+    const safeQty = Math.max(1, Math.min(9, qty));
     const current = (myOrder && myOrder.selections) || {};
     const arr = current[catKey] || [];
     const newArr = arr.map((x) => (x.id === itemId ? { ...x, qty: safeQty } : x));
@@ -768,11 +787,13 @@ export default function LOiseauTraiteur() {
   }
 
   // ---------- commandes du jour (vue traiteur) ----------
-  // Par défaut, on se cale sur le jour du prochain menu publié (là où il y a le plus de chances
-  // qu'il y ait déjà des commandes), plutôt que sur "aujourd'hui" qui peut ne rien contenir.
+  // Par défaut, on se cale sur le jour du prochain menu encore commandable (généralement demain),
+  // plutôt que sur le menu du jour même — déjà verrouillé et donc moins utile à consulter en
+  // arrivant sur cette vue.
   useEffect(() => {
     if (!menusLoading && !ordersViewDate) {
-      setOrdersViewDate(menus.length ? menus[0].date : todayISO());
+      const nextCommandable = menus.find((m) => m.date > todayISO());
+      setOrdersViewDate(nextCommandable ? nextCommandable.date : menus.length ? menus[0].date : todayISO());
     }
   }, [menusLoading, menus, ordersViewDate]);
 
@@ -969,9 +990,9 @@ export default function LOiseauTraiteur() {
   const orderTotal = myOrder && myOrder.total ? myOrder.total : 0;
   // Un menu dont la date est déjà passée ne peut plus être supprimé (on garde l'historique).
   const isPastMenuDate = traiteurDate < todayISO();
-  // Une commande dont la date est déjà passée ne peut plus être annulée (la facturation ne doit
-  // pas pouvoir être modifiée après coup).
-  const isPastOrderDate = selectedOrderDate < todayISO();
+  // Une commande ne peut plus être envoyée ni annulée à partir de 9h (heure locale) le jour même
+  // du repas, ni après — le traiteur doit pouvoir compter sur les commandes à partir de ce moment.
+  const isPastOrderDate = isOrderLocked(selectedOrderDate);
   const orderSummaryText =
     myOrder && myOrder.selections
       ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
@@ -1022,7 +1043,7 @@ export default function LOiseauTraiteur() {
                 e.stopPropagation();
                 updateItemQty(cat.key, dish.id, entry.qty + 1);
               }}
-              disabled={entry.qty >= 2}
+              disabled={entry.qty >= 9}
               aria-label="Ajouter une portion"
             >
               +
@@ -1447,7 +1468,11 @@ export default function LOiseauTraiteur() {
                             orderSubmitStatus === "cancelling" ||
                             isPastOrderDate
                           }
-                          title={isPastOrderDate ? "Une commande dont la date est passée ne peut plus être envoyée" : undefined}
+                          title={
+                            isPastOrderDate
+                              ? `Plus modifiable à partir de ${ORDER_LOCK_HOUR}h le jour même`
+                              : undefined
+                          }
                         >
                           {orderSubmitStatus === "sending" ? <Loader2 className="lf-spin" size={14} /> : null}
                           Envoyer ma commande
@@ -1456,7 +1481,11 @@ export default function LOiseauTraiteur() {
                           className="lf-btn lf-btn-danger"
                           onClick={cancelOrder}
                           disabled={orderSubmitStatus === "sending" || orderSubmitStatus === "cancelling" || isPastOrderDate}
-                          title={isPastOrderDate ? "Une commande dont la date est passée ne peut plus être annulée" : undefined}
+                          title={
+                            isPastOrderDate
+                              ? `Plus annulable à partir de ${ORDER_LOCK_HOUR}h le jour même`
+                              : undefined
+                          }
                         >
                           {orderSubmitStatus === "cancelling" ? <Loader2 className="lf-spin" size={14} /> : null}
                           Annuler ma commande
