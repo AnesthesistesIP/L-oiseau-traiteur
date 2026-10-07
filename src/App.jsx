@@ -5,6 +5,41 @@ import logoTraiteur from "./logo-traiteur.png";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
+function TakeawayNote({ n }) {
+  return (
+    <>
+      {" "}(dont {n} à emporter <KraftBoxIcon width={18} height={15} style={{ verticalAlign: -3 }} />)
+    </>
+  );
+}
+
+function joinNodes(nodes, sep) {
+  return nodes.flatMap((node, i) => (i === 0 ? [node] : [sep, node]));
+}
+
+function KraftBoxIcon({ width = 24, height = 20, style }) {
+  const st = { stroke: "#7A4F28", strokeWidth: 1.2, strokeLinejoin: "round", vectorEffect: "non-scaling-stroke" };
+  return (
+    <svg width={width} height={height} viewBox="0 0 170 145" aria-hidden="true" style={style}>
+      <defs>
+        <clipPath id="kb-opening"><polygon points="75,43 132.16,76 92.32,99 35.16,66" /></clipPath>
+      </defs>
+      <polygon points="75,43 132.16,76 141.66,51 84.5,18" fill="#D2A06A" {...st} />
+      <polygon points="75,43 35.16,66 26.66,44 66.5,21" fill="#C58F58" {...st} />
+      <polygon points="75,43 132.16,76 92.32,99 35.16,66" fill="#A9693A" {...st} />
+      <g clipPath="url(#kb-opening)">
+        <polygon points="75,43 132.16,76 132.16,103 75,70" fill="#BF7E48" {...st} />
+        <polygon points="75,43 35.16,66 35.16,93 75,70" fill="#B07040" {...st} />
+      </g>
+      <polygon points="75,43 132.16,76 92.32,99 35.16,66" fill="none" {...st} />
+      <polygon points="35.16,66 92.32,99 92.32,126 35.16,93" fill="#C99B6A" {...st} />
+      <polygon points="92.32,99 132.16,76 132.16,103 92.32,126" fill="#B98450" {...st} />
+      <polygon points="132.16,76 92.32,99 100.98,86 140.82,63" fill="#DDB075" {...st} />
+      <polygon points="35.16,66 92.32,99 82.79,104.5 25.63,71.5" fill="#E2BE86" {...st} />
+    </svg>
+  );
+}
+
 // ---------- constants ----------
 // "recurring: true" = catégorie dont le catalogue complet (desserts, boissons), avec des prix
 // fixes, est automatiquement reproposé chaque jour — voir catalogRef plus bas.
@@ -80,6 +115,11 @@ function tomorrowISO() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+function yesterdayISO() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function currentMonthISO() {
   return todayISO().slice(0, 7);
@@ -234,6 +274,13 @@ export default function LOiseauTraiteur() {
   const [ordersViewDate, setOrdersViewDate] = useState("");
   const [dayOrders, setDayOrders] = useState([]);
   const [dayOrdersLoading, setDayOrdersLoading] = useState(false);
+  // Correction d'une commande par le traiteur (glisser vers la gauche) : aucune limite horaire.
+  const [editingDoctor, setEditingDoctor] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [swipe, setSwipe] = useState({ doctor: null, dx: 0 });
+  const swipeRef = useRef(null);
 
   // résumé tab
   const [summaryMonth, setSummaryMonth] = useState(currentMonthISO());
@@ -432,17 +479,31 @@ export default function LOiseauTraiteur() {
     const price = item.price != null ? item.price : defaultPriceFor(catKey, item);
     const newArr = exists
       ? arr.filter((x) => x.id !== item.id)
-      : [...arr, { id: item.id, name: item.name, price, qty: 1 }];
+      : [...arr, { id: item.id, name: item.name, price, qty: 1, takeaway: 0 }];
     updateDraftSelections({ ...current, [catKey]: newArr });
   }
 
   // Change la quantité d'un plat déjà choisi (indépendamment des autres plats de la même
-  // catégorie). Modifie seulement le brouillon local.
+  // catégorie). Modifie seulement le brouillon local. Si la quantité diminue sous le nombre
+  // d'exemplaires "à emporter" déjà demandés, ce dernier est ramené au même niveau.
   function updateItemQty(catKey, itemId, qty) {
     const safeQty = Math.max(1, Math.min(9, qty));
     const current = (myOrder && myOrder.selections) || {};
     const arr = current[catKey] || [];
-    const newArr = arr.map((x) => (x.id === itemId ? { ...x, qty: safeQty } : x));
+    const newArr = arr.map((x) =>
+      x.id === itemId ? { ...x, qty: safeQty, takeaway: Math.min(x.takeaway || 0, safeQty) } : x
+    );
+    updateDraftSelections({ ...current, [catKey]: newArr });
+  }
+
+  // Change, parmi les exemplaires déjà commandés d'un plat, combien doivent être emballés dans
+  // l'ancien contenant en carton (à emporter) plutôt que dans le Tupperware en verre réutilisable.
+  function updateItemTakeaway(catKey, itemId, takeaway) {
+    const current = (myOrder && myOrder.selections) || {};
+    const arr = current[catKey] || [];
+    const newArr = arr.map((x) =>
+      x.id === itemId ? { ...x, takeaway: Math.max(0, Math.min(takeaway, x.qty || 1)) } : x
+    );
     updateDraftSelections({ ...current, [catKey]: newArr });
   }
 
@@ -813,9 +874,12 @@ export default function LOiseauTraiteur() {
             name: it.name,
             price: Number(it.price) || 0,
             qty: Number(it.qty) || 1,
+            takeaway: Number(it.takeaway) || 0,
           }))
         );
-        return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
+        const selectionsArr = {};
+        CATEGORIES.forEach((c) => (selectionsArr[c.key] = selArray(selections[c.key]).map((it) => ({ ...it }))));
+        return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0, selections: selectionsArr };
       });
       setDayOrders(rows.sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")));
     } catch (e) {
@@ -831,13 +895,87 @@ export default function LOiseauTraiteur() {
     dayOrders.forEach((o) => {
       o.items.forEach((it) => {
         const m = map[it.category];
-        m.set(it.name, (m.get(it.name) || 0) + it.qty);
+        const prev = m.get(it.name) || { qty: 0, takeaway: 0 };
+        m.set(it.name, { qty: prev.qty + it.qty, takeaway: prev.takeaway + (it.takeaway || 0) });
       });
     });
     return map;
   }, [dayOrders]);
 
   const dayTotal = useMemo(() => dayOrders.reduce((s, o) => s + o.total, 0), [dayOrders]);
+
+  useEffect(() => {
+    setEditingDoctor(null);
+    setEditDraft(null);
+    setEditError("");
+  }, [ordersViewDate]);
+
+  function openOrderEditor(o) {
+    const draft = {};
+    CATEGORIES.forEach((c) => (draft[c.key] = (o.selections[c.key] || []).map((it) => ({ ...it }))));
+    setEditDraft(draft);
+    setEditingDoctor(o.doctor);
+    setEditError("");
+  }
+  function closeOrderEditor() {
+    setEditingDoctor(null);
+    setEditDraft(null);
+    setEditError("");
+  }
+  function editDecrement(catKey, idx) {
+    setEditDraft((prev) => {
+      const arr = prev[catKey].map((it) => ({ ...it }));
+      const it = arr[idx];
+      it.qty = (it.qty || 1) - 1;
+      if (it.qty <= 0) arr.splice(idx, 1);
+      else if ((it.takeaway || 0) > it.qty) it.takeaway = it.qty;
+      return { ...prev, [catKey]: arr };
+    });
+  }
+  function editRemove(catKey, idx) {
+    setEditDraft((prev) => ({ ...prev, [catKey]: prev[catKey].filter((_, i) => i !== idx) }));
+  }
+  async function saveOrderEdit() {
+    if (!editingDoctor || !editDraft) return;
+    const hasAny = CATEGORIES.some((c) => (editDraft[c.key] || []).length > 0);
+    if (!hasAny && !window.confirm("Plus aucun article : la commande de " + editingDoctor + " sera supprimée. Continuer ?")) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      if (!hasAny) {
+        await withRetry(() => api.deleteOrder(ordersViewDate, editingDoctor));
+      } else {
+        const total = computeTotal(editDraft);
+        await withRetry(() => api.saveOrder(ordersViewDate, editingDoctor, editDraft, total));
+      }
+      await loadDayOrders(ordersViewDate);
+      closeOrderEditor();
+    } catch (e) {
+      console.error("[L'Oiseau Traiteur] erreur:", e);
+      setEditError("L'enregistrement a échoué, réessayez.");
+    }
+    setEditSaving(false);
+  }
+  function onRowPointerDown(e, doctor) {
+    swipeRef.current = { doctor, x0: e.clientX, y0: e.clientY, dx: 0, horizontal: false };
+  }
+  function onRowPointerMove(e) {
+    const st = swipeRef.current;
+    if (!st) return;
+    const dx = e.clientX - st.x0;
+    const dy = e.clientY - st.y0;
+    if (!st.horizontal && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) st.horizontal = true;
+    if (st.horizontal) {
+      st.dx = dx;
+      setSwipe({ doctor: st.doctor, dx: Math.max(Math.min(dx, 0), -90) });
+    }
+  }
+  function onRowPointerEnd(o) {
+    const st = swipeRef.current;
+    swipeRef.current = null;
+    setSwipe({ doctor: null, dx: 0 });
+    if (st && st.horizontal && st.dx < -60) openOrderEditor(o);
+  }
 
   // ---------- résumé tab ----------
   useEffect(() => {
@@ -897,13 +1035,20 @@ export default function LOiseauTraiteur() {
   }, [grouped]);
 
   function describeItems(items) {
-    return items
-      .map((it) => {
+    return joinNodes(
+      items.map((it, i) => {
         const s = categorySingular(it.category);
-        const label = `${s.charAt(0).toUpperCase()}${s.slice(1)}: ${it.name}`;
-        return it.qty > 1 ? `${label} ×${it.qty}` : label;
-      })
-      .join(" / ");
+        let label = `${s.charAt(0).toUpperCase()}${s.slice(1)}: ${it.name}`;
+        if (it.qty > 1) label += ` ×${it.qty}`;
+        return (
+          <span key={i}>
+            {label}
+            {it.takeaway > 0 && <TakeawayNote n={it.takeaway} />}
+          </span>
+        );
+      }),
+      " / "
+    );
   }
 
   function exportCSV() {
@@ -996,9 +1141,25 @@ export default function LOiseauTraiteur() {
   const orderSummaryText =
     myOrder && myOrder.selections
       ? CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key]))
-          .map((sel) => (sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name))
+          .map((sel) => {
+            let label = sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name;
+            if (sel.takeaway > 0) label += ` (dont ${sel.takeaway} à emporter)`;
+            return label;
+          })
           .join(" / ")
       : "";
+  const orderSummaryNodes =
+    myOrder && myOrder.selections
+      ? joinNodes(
+          CATEGORIES.flatMap((c) => selArray(myOrder.selections[c.key])).map((sel, i) => (
+            <span key={i}>
+              {sel.qty > 1 ? `${sel.name} ×${sel.qty}` : sel.name}
+              {sel.takeaway > 0 && <TakeawayNote n={sel.takeaway} />}
+            </span>
+          )),
+          " / "
+        )
+      : null;
   const formulaInfo = myOrder && myOrder.selections ? computeFormulaInfo(myOrder.selections) : { applies: false, setsCount: 0, savings: 0 };
 
   // Rendu d'une carte de plat sélectionnable, réutilisé pour les sous-groupes "Plat du jour" /
@@ -1048,6 +1209,38 @@ export default function LOiseauTraiteur() {
             >
               +
             </button>
+          </div>
+        )}
+        {isSelected && cat.key === "plat" && (
+          <div className="lf-takeaway-stepper" onClick={(e) => e.stopPropagation()}>
+            <span className="lf-takeaway-label">
+              <KraftBoxIcon width={24} height={20} style={{ verticalAlign: -5 }} /> à emporter (carton)
+            </span>
+            <div className="lf-dish-stepper">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  updateItemTakeaway(cat.key, dish.id, (entry.takeaway || 0) - 1);
+                }}
+                disabled={(entry.takeaway || 0) <= 0}
+                aria-label="Retirer un exemplaire à emporter"
+              >
+                −
+              </button>
+              <span>{entry.takeaway || 0}</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  updateItemTakeaway(cat.key, dish.id, (entry.takeaway || 0) + 1);
+                }}
+                disabled={(entry.takeaway || 0) >= entry.qty}
+                aria-label="Ajouter un exemplaire à emporter"
+              >
+                +
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1183,6 +1376,11 @@ export default function LOiseauTraiteur() {
         .lf-dish-stepper span {
           font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 14px; min-width: 14px; text-align: center;
         }
+        .lf-takeaway-stepper {
+          display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px;
+          border-top: 1px dashed var(--line); flex-wrap: wrap;
+        }
+        .lf-takeaway-label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
         .lf-catheader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
         .lf-subgroup-label {
           font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 700; color: #C2577A;
@@ -1244,6 +1442,14 @@ export default function LOiseauTraiteur() {
         @keyframes lf-spin { to { transform: rotate(360deg); } }
 
         .lf-menupreview h3 { font-family: 'Cormorant Garamond', serif; font-size: 15px; margin: 0 0 12px; }
+        .lf-swipe-wrap { position: relative; overflow: hidden; border-bottom: 1px dashed var(--line); }
+        .lf-swipe-wrap:last-child { border-bottom: none; }
+        .lf-swipe-wrap .lf-preview-item { border-bottom: none; }
+        .lf-swipe-behind { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 14px; background: var(--blush-light); color: #C2577A; font-weight: 700; font-size: 13px; }
+        .lf-swipe-row { position: relative; background: var(--card, #fff); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
+        .lf-order-editor { background: var(--pine-light); border-radius: 10px; padding: 10px 12px; margin: 2px 0 10px; }
+        .lf-order-editor-line { display: flex; align-items: center; gap: 6px; padding: 5px 0; font-size: 13.5px; }
+        .lf-order-editor-btn { padding: 4px 10px; min-width: 0; }
         .lf-preview-item { padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
         .lf-preview-item:last-child { border-bottom: none; }
         .lf-preview-date { font-weight: 600; display: block; margin-bottom: 3px; }
@@ -1433,12 +1639,12 @@ export default function LOiseauTraiteur() {
                           <>
                             {orderDirty ? (
                               <span style={{ fontSize: 13.5 }}>
-                                Sélection : {orderSummaryText}{" "}
+                                Sélection : {orderSummaryNodes}{" "}
                                 <span style={{ color: "var(--coral)", fontWeight: 600 }}>— non envoyée</span>
                               </span>
                             ) : (
                               <span className="lf-status ok">
-                                <Check size={14} /> Commande envoyée — {orderSummaryText}
+                                <Check size={14} /> Commande envoyée — {orderSummaryNodes}
                               </span>
                             )}
                             {formulaInfo.applies && (
@@ -1531,19 +1737,17 @@ export default function LOiseauTraiteur() {
                 {dayOrders.length > 0 && <div className="lf-ordersummary-total">{formatEuro(dayTotal)}</div>}
               </div>
 
-              {menus.length > 0 && (
-                <div className="lf-pills" style={{ marginBottom: 16 }}>
-                  {menus.map((m) => (
-                    <button
-                      key={m.date}
-                      className={`lf-pill ${ordersViewDate === m.date ? "active" : ""}`}
-                      onClick={() => setOrdersViewDate(m.date)}
-                    >
-                      {formatDateShort(m.date)}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="lf-pills" style={{ marginBottom: 16 }}>
+                {[yesterdayISO(), ...menus.map((m) => m.date).filter((d) => d !== yesterdayISO())].map((d) => (
+                  <button
+                    key={d}
+                    className={`lf-pill ${ordersViewDate === d ? "active" : ""}`}
+                    onClick={() => setOrdersViewDate(d)}
+                  >
+                    {formatDateShort(d)}
+                  </button>
+                ))}
+              </div>
 
               {dayOrdersLoading ? (
                 <Loader2 className="lf-spin" size={18} />
@@ -1561,25 +1765,96 @@ export default function LOiseauTraiteur() {
                           {c.label}
                         </span>
                         <div style={{ fontSize: 13.5, color: "var(--ink)", marginTop: 2 }}>
-                          {Array.from(dayAggregated[c.key].entries())
-                            .map(([name, count]) => `${count} × ${name}`)
-                            .join(" · ")}
+                          {joinNodes(
+                            Array.from(dayAggregated[c.key].entries()).map(([name, { qty, takeaway }]) => (
+                              <span key={name}>
+                                {qty} × {name}
+                                {takeaway > 0 && <TakeawayNote n={takeaway} />}
+                              </span>
+                            )),
+                            " · "
+                          )}
                         </div>
                       </div>
                     ))}
                   </div>
                   <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
-                    {dayOrders.map((o, i) => (
-                      <div key={i} className="lf-preview-item">
-                        <span className="lf-preview-date">{o.doctor}</span>
-                        <span className="lf-preview-cats">
-                          {describeItems(o.items)} — {formatEuro(o.total)}
-                        </span>
-                      </div>
-                    ))}
+                    {dayOrders.map((o, i) => {
+                      const isEditing = editingDoctor === o.doctor && editDraft;
+                      const dx = swipe.doctor === o.doctor ? swipe.dx : 0;
+                      return (
+                        <div key={i} className="lf-swipe-wrap">
+                          <div className="lf-swipe-behind">Modifier</div>
+                          <div
+                            className="lf-preview-item lf-swipe-row"
+                            style={{ transform: `translateX(${dx}px)`, transition: dx ? "none" : "transform .2s" }}
+                            onPointerDown={(e) => onRowPointerDown(e, o.doctor)}
+                            onPointerMove={onRowPointerMove}
+                            onPointerUp={() => onRowPointerEnd(o)}
+                            onPointerCancel={() => onRowPointerEnd(o)}
+                          >
+                            <span className="lf-preview-date">{o.doctor}</span>
+                            <span className="lf-preview-cats">
+                              {describeItems(o.items)} — {formatEuro(o.total)}
+                            </span>
+                          </div>
+                          {isEditing && (
+                            <div className="lf-order-editor">
+                              {CATEGORIES.flatMap((c) =>
+                                (editDraft[c.key] || []).map((it, idx) => (
+                                  <div key={`${c.key}-${idx}`} className="lf-order-editor-line">
+                                    <span style={{ flex: 1, minWidth: 0 }}>
+                                      {it.qty > 1 ? `${it.qty} × ` : ""}
+                                      {it.name}
+                                      {(it.takeaway || 0) > 0 && <TakeawayNote n={it.takeaway} />}
+                                    </span>
+                                    {(it.qty || 1) > 1 && (
+                                      <button
+                                        type="button"
+                                        className="lf-btn lf-btn-ghost lf-order-editor-btn"
+                                        onClick={() => editDecrement(c.key, idx)}
+                                        aria-label={`Retirer un exemplaire de ${it.name}`}
+                                      >
+                                        −1
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="lf-btn lf-btn-ghost lf-order-editor-btn"
+                                      onClick={() => editRemove(c.key, idx)}
+                                      aria-label={`Supprimer ${it.name}`}
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                              {!CATEGORIES.some((c) => (editDraft[c.key] || []).length > 0) && (
+                                <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: "4px 0" }}>
+                                  Plus aucun article : la commande sera supprimée.
+                                </p>
+                              )}
+                              <div className="lf-row" style={{ marginTop: 8, justifyContent: "space-between" }}>
+                                <strong>Nouveau total : {formatEuro(computeTotal(editDraft))}</strong>
+                                <div className="lf-row">
+                                  <button className="lf-btn lf-btn-ghost" onClick={closeOrderEditor} disabled={editSaving}>
+                                    Annuler
+                                  </button>
+                                  <button className="lf-btn lf-btn-primary" onClick={saveOrderEdit} disabled={editSaving}>
+                                    {editSaving ? <Loader2 className="lf-spin" size={14} /> : "Enregistrer"}
+                                  </button>
+                                </div>
+                              </div>
+                              {editError && <p style={{ color: "var(--coral)", fontSize: 12.5, margin: "6px 0 0" }}>{editError}</p>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10, marginBottom: 0 }}>
-                    {dayOrders.length} commande{dayOrders.length > 1 ? "s" : ""} au total.
+                    {dayOrders.length} commande{dayOrders.length > 1 ? "s" : ""} au total · Glissez une commande vers la
+                    gauche pour la modifier.
                   </p>
                 </>
               )}
