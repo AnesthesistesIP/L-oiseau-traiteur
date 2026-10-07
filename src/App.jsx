@@ -284,6 +284,14 @@ export default function LOiseauTraiteur() {
 
   // résumé tab
   const [summaryMonth, setSummaryMonth] = useState(currentMonthISO());
+  // Ajout manuel (commandes passées hors application) dans la facturation.
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDoctor, setManualDoctor] = useState("");
+  const [manualDate, setManualDate] = useState("");
+  const [manualLines, setManualLines] = useState([]);
+  const [manualDraft, setManualDraft] = useState({ category: "plat", name: "", price: "", qty: "1" });
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualMsg, setManualMsg] = useState("");
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState("");
   const [summaryRows, setSummaryRows] = useState([]); // [{date, doctor, items:[{category,name,price}], total}]
@@ -1037,6 +1045,57 @@ export default function LOiseauTraiteur() {
       setSummaryRows([]);
     }
     setSummaryLoading(false);
+  }
+
+  function defaultManualDate(month) {
+    const t = todayISO();
+    return t.slice(0, 7) === month ? t : `${month}-01`;
+  }
+  useEffect(() => {
+    setManualDate(defaultManualDate(summaryMonth));
+  }, [summaryMonth]);
+
+  function addManualLine() {
+    const name = manualDraft.name.trim();
+    const price = parseFloat(String(manualDraft.price).replace(",", "."));
+    const qty = parseInt(manualDraft.qty, 10);
+    if (!name) return setManualMsg("Indiquez le nom de l'article.");
+    if (!isFinite(price) || price < 0) return setManualMsg("Indiquez un prix valide.");
+    if (!qty || qty < 1) return setManualMsg("Indiquez une quantité valide.");
+    setManualLines((prev) => [...prev, { category: manualDraft.category, name, price, qty }]);
+    setManualDraft((d) => ({ ...d, name: "", price: "", qty: "1" }));
+    setManualMsg("");
+  }
+
+  async function saveManualOrder() {
+    if (!manualDoctor) return setManualMsg("Choisissez un médecin.");
+    if (!manualDate || manualDate.slice(0, 7) !== summaryMonth) return setManualMsg("La date doit être dans le mois affiché.");
+    if (manualLines.length === 0) return setManualMsg("Ajoutez au moins un article.");
+    setManualSaving(true);
+    setManualMsg("");
+    try {
+      // Une seule commande par médecin et par jour : on complète celle qui existe déjà.
+      const existing = await api.getOrder(manualDate, manualDoctor);
+      const selections = {};
+      CATEGORIES.forEach((c) => {
+        selections[c.key] = selArray(existing && existing.selections ? existing.selections[c.key] : null).map((it) => ({ ...it }));
+      });
+      manualLines.forEach((l) => {
+        const arr = selections[l.category];
+        const same = arr.find((it) => it.name.trim().toLowerCase() === l.name.toLowerCase() && Number(it.price) === l.price);
+        if (same) same.qty = (Number(same.qty) || 1) + l.qty;
+        else arr.push({ id: genId(), name: l.name, price: l.price, qty: l.qty });
+      });
+      const total = computeTotal(selections);
+      await withRetry(() => api.saveOrder(manualDate, manualDoctor, selections, total));
+      setManualLines([]);
+      setManualMsg(`Commande ajoutée pour ${manualDoctor} le ${formatDateLong(manualDate)}.`);
+      await loadSummary(summaryMonth);
+    } catch (e) {
+      console.error("[L'Oiseau Traiteur] erreur:", e);
+      setManualMsg("L'enregistrement a échoué, réessayez.");
+    }
+    setManualSaving(false);
   }
 
   const grouped = useMemo(() => {
@@ -2131,6 +2190,104 @@ export default function LOiseauTraiteur() {
                 <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10, marginBottom: 0 }}>
                   Mois en cours : la remise fidélité n'apparaît qu'une fois le mois terminé.
                 </p>
+              )}
+            </div>
+
+            <div className="lf-card">
+              {!manualOpen ? (
+                <button className="lf-btn lf-btn-ghost" onClick={() => setManualOpen(true)}>
+                  <Plus size={14} /> Ajouter une commande hors application
+                </button>
+              ) : (
+                <div>
+                  <div className="lf-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+                    <span className="lf-label" style={{ margin: 0 }}>Commande hors application</span>
+                    <button className="lf-btn lf-btn-ghost lf-order-editor-btn" onClick={() => setManualOpen(false)} aria-label="Fermer">
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="lf-row" style={{ marginBottom: 10 }}>
+                    <select className="lf-select" value={manualDoctor} onChange={(e) => setManualDoctor(e.target.value)} style={{ flex: 1, minWidth: 0 }}>
+                      <option value="">Médecin…</option>
+                      {doctors.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      className="lf-input"
+                      value={manualDate}
+                      min={`${summaryMonth}-01`}
+                      max={`${summaryMonth}-31`}
+                      onChange={(e) => setManualDate(e.target.value)}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                  </div>
+                  <div className="lf-row" style={{ marginBottom: 8, flexWrap: "wrap" }}>
+                    <select
+                      className="lf-select"
+                      value={manualDraft.category}
+                      onChange={(e) => setManualDraft({ ...manualDraft, category: e.target.value })}
+                    >
+                      {CATEGORIES.map((c) => (
+                        <option key={c.key} value={c.key}>{c.singular.charAt(0).toUpperCase() + c.singular.slice(1)}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="lf-input"
+                      placeholder="Article"
+                      value={manualDraft.name}
+                      onChange={(e) => setManualDraft({ ...manualDraft, name: e.target.value })}
+                      style={{ flex: 1, minWidth: 120 }}
+                    />
+                  </div>
+                  <div className="lf-row" style={{ marginBottom: 10 }}>
+                    <input
+                      className="lf-input"
+                      inputMode="decimal"
+                      placeholder="Prix €"
+                      value={manualDraft.price}
+                      onChange={(e) => setManualDraft({ ...manualDraft, price: e.target.value })}
+                      style={{ width: 90 }}
+                    />
+                    <input
+                      className="lf-input"
+                      inputMode="numeric"
+                      placeholder="Qté"
+                      value={manualDraft.qty}
+                      onChange={(e) => setManualDraft({ ...manualDraft, qty: e.target.value })}
+                      style={{ width: 70 }}
+                    />
+                    <button className="lf-btn lf-btn-ghost" onClick={addManualLine}>
+                      <Plus size={14} /> Ajouter l'article
+                    </button>
+                  </div>
+                  {manualLines.map((l, i) => (
+                    <div key={i} className="lf-order-editor-line">
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        {l.qty > 1 ? `${l.qty} × ` : ""}
+                        {l.name} — {formatEuro(l.price * l.qty)}
+                      </span>
+                      <button
+                        type="button"
+                        className="lf-btn lf-btn-ghost lf-order-editor-btn"
+                        onClick={() => setManualLines((prev) => prev.filter((_, j) => j !== i))}
+                        aria-label={`Retirer ${l.name}`}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="lf-row" style={{ marginTop: 10, justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>
+                      Si le médecin a déjà une commande ce jour-là, les articles y sont ajoutés.
+                    </span>
+                    <button className="lf-btn lf-btn-primary" onClick={saveManualOrder} disabled={manualSaving || manualLines.length === 0}>
+                      {manualSaving ? <Loader2 className="lf-spin" size={14} /> : "Enregistrer"}
+                    </button>
+                  </div>
+                  {manualMsg && <p style={{ fontSize: 12.5, margin: "8px 0 0", color: "var(--pine-dark)" }}>{manualMsg}</p>}
+                </div>
               )}
             </div>
 
