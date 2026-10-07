@@ -304,26 +304,57 @@ export default function LOiseauTraiteur() {
     loadMenus();
   }, []);
 
-  async function loadMenus() {
-    setMenusLoading(true);
+  // Actualisation automatique : toutes les 60 s et dès que l'app redevient visible (retour sur
+  // l'onglet / l'application), pour voir un menu publié pendant qu'on était déjà connecté.
+  const refreshRef = useRef(null);
+  refreshRef.current = () => {
+    loadMenus(true);
+    if (tab === "traiteur" && ordersViewDate && !editingDoctor && !editSaving) loadDayOrders(ordersViewDate, true);
+  };
+  useEffect(() => {
+    const run = () => {
+      if (document.visibilityState === "visible" && refreshRef.current) refreshRef.current();
+    };
+    const id = setInterval(run, 60000);
+    document.addEventListener("visibilitychange", run);
+    window.addEventListener("focus", run);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", run);
+      window.removeEventListener("focus", run);
+    };
+  }, []);
+
+  async function loadMenus(silent = false) {
+    if (!silent) setMenusLoading(true);
     try {
       const filtered = (await api.listUpcomingMenus(todayISO())).filter((m) =>
         CATEGORIES.some((c) => (m.categories[c.key] || []).length > 0)
       );
       setMenus(filtered);
       setSelectedOrderDate((prev) => {
-        if (prev && filtered.some((m) => m.date === prev)) return prev;
+        if (prev && filtered.some((m) => m.date === prev)) {
+          // Actualisation automatique : si le jour affiché est déjà verrouillé et qu'un menu
+          // commandable vient d'être publié, on passe directement dessus.
+          if (silent && isOrderLocked(prev)) {
+            const next = filtered.find((m) => m.date > todayISO());
+            if (next) return next.date;
+          }
+          return prev;
+        }
         // Le menu du jour même est déjà verrouillé (voir ORDER_LOCK_HOUR) : on privilégie le
         // premier jour encore commandable, et seulement à défaut celui d'aujourd'hui.
         const nextCommandable = filtered.find((m) => m.date > todayISO());
         return nextCommandable ? nextCommandable.date : filtered.length ? filtered[0].date : "";
       });
     } catch (e) {
-        console.error("[L'Oiseau Traiteur] erreur:", e);
-      setMenus([]);
-      setGlobalError("Impossible de charger les menus. Vérifiez votre connexion.");
+      console.error("[L'Oiseau Traiteur] erreur:", e);
+      if (!silent) {
+        setMenus([]);
+        setGlobalError("Impossible de charger les menus. Vérifiez votre connexion.");
+      }
     }
-    setMenusLoading(false);
+    if (!silent) setMenusLoading(false);
   }
 
   // ---------- doctor management ----------
@@ -862,8 +893,8 @@ export default function LOiseauTraiteur() {
     if (tab === "traiteur" && ordersViewDate) loadDayOrders(ordersViewDate);
   }, [tab, ordersViewDate]);
 
-  async function loadDayOrders(date) {
-    setDayOrdersLoading(true);
+  async function loadDayOrders(date, silent = false) {
+    if (!silent) setDayOrdersLoading(true);
     try {
       const raw = await api.listOrdersForDate(date);
       const rows = raw.map((parsed) => {
@@ -884,9 +915,9 @@ export default function LOiseauTraiteur() {
       setDayOrders(rows.sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")));
     } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
-      setDayOrders([]);
+      if (!silent) setDayOrders([]);
     }
-    setDayOrdersLoading(false);
+    if (!silent) setDayOrdersLoading(false);
   }
 
   const dayAggregated = useMemo(() => {
