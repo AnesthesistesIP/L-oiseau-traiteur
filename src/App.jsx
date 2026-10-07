@@ -1442,12 +1442,13 @@ export default function LOiseauTraiteur() {
         @keyframes lf-spin { to { transform: rotate(360deg); } }
 
         .lf-menupreview h3 { font-family: 'Cormorant Garamond', serif; font-size: 15px; margin: 0 0 12px; }
-        .lf-swipe-wrap { position: relative; overflow: hidden; border-bottom: 1px dashed var(--line); }
+        .lf-swipe-track { position: relative; overflow: hidden; }
+        .lf-swipe-wrap { border-bottom: 1px dashed var(--line); }
         .lf-swipe-wrap:last-child { border-bottom: none; }
         .lf-swipe-wrap .lf-preview-item { border-bottom: none; }
-        .lf-swipe-behind { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 14px; background: var(--blush-light); color: #C2577A; font-weight: 700; font-size: 13px; }
+        .lf-swipe-behind { position: absolute; top: 0; bottom: 0; right: 0; left: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 14px; background: var(--blush-light); color: #C2577A; font-weight: 700; font-size: 13px; }
         .lf-swipe-row { position: relative; background: var(--card, #fff); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
-        .lf-order-editor { background: var(--pine-light); border-radius: 10px; padding: 10px 12px; margin: 2px 0 10px; }
+        .lf-order-editor { position: relative; z-index: 1; background: var(--pine-light); border-radius: 10px; padding: 10px 12px; margin: 2px 0 10px; }
         .lf-order-editor-line { display: flex; align-items: center; gap: 6px; padding: 5px 0; font-size: 13.5px; }
         .lf-order-editor-btn { padding: 4px 10px; min-width: 0; }
         .lf-preview-item { padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
@@ -1784,7 +1785,8 @@ export default function LOiseauTraiteur() {
                       const dx = swipe.doctor === o.doctor ? swipe.dx : 0;
                       return (
                         <div key={i} className="lf-swipe-wrap">
-                          <div className="lf-swipe-behind">Modifier</div>
+                          <div className="lf-swipe-track">
+                          {dx < 0 && <div className="lf-swipe-behind">Modifier</div>}
                           <div
                             className="lf-preview-item lf-swipe-row"
                             style={{ transform: `translateX(${dx}px)`, transition: dx ? "none" : "transform .2s" }}
@@ -1797,6 +1799,7 @@ export default function LOiseauTraiteur() {
                             <span className="lf-preview-cats">
                               {describeItems(o.items)} — {formatEuro(o.total)}
                             </span>
+                          </div>
                           </div>
                           {isEditing && (
                             <div className="lf-order-editor">
