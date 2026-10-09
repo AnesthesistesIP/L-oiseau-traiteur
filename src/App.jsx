@@ -319,7 +319,36 @@ export default function LOiseauTraiteur() {
   refreshRef.current = () => {
     loadMenus(true);
     if (tab === "traiteur" && ordersViewDate && !editingDoctor && !editSaving) loadDayOrders(ordersViewDate, true);
+    if (tab === "resume" && !manualSaving) loadSummary(summaryMonth, true);
+    if (tab === "commander" && selectedDoctor && selectedOrderDate && !orderDirty && !orderSubmitStatus && myOrder !== undefined) {
+      const doc = selectedDoctor;
+      const date = selectedOrderDate;
+      api
+        .getOrder(date, doc)
+        .then((data) => {
+          const normalized = {};
+          CATEGORIES.forEach((c) => (normalized[c.key] = selArray(data && data.selections && data.selections[c.key])));
+          const changed = JSON.stringify(normalized) !== JSON.stringify(savedSelectionsRef.current || emptyCategories());
+          if (!changed) return;
+          // Ne rien écraser si l'utilisateur a changé de médecin/jour ou commencé à modifier entre-temps.
+          if (doc !== selectedDoctorRef.current || date !== selectedOrderDateRef.current || orderDirtyRef.current) return;
+          if (data) {
+            setMyOrder({ selections: normalized, total: data.total });
+            savedSelectionsRef.current = normalized;
+          } else {
+            setMyOrder(null);
+            savedSelectionsRef.current = null;
+          }
+        })
+        .catch(() => {});
+    }
   };
+  const selectedDoctorRef = useRef(selectedDoctor);
+  const selectedOrderDateRef = useRef(selectedOrderDate);
+  const orderDirtyRef = useRef(orderDirty);
+  selectedDoctorRef.current = selectedDoctor;
+  selectedOrderDateRef.current = selectedOrderDate;
+  orderDirtyRef.current = orderDirty;
   useEffect(() => {
     const run = () => {
       if (document.visibilityState === "visible" && refreshRef.current) refreshRef.current();
@@ -1022,9 +1051,9 @@ export default function LOiseauTraiteur() {
     if (tab === "resume") loadSummary(summaryMonth);
   }, [tab, summaryMonth]);
 
-  async function loadSummary(month) {
-    setSummaryLoading(true);
-    setSummaryError("");
+  async function loadSummary(month, silent = false) {
+    if (!silent) setSummaryLoading(true);
+    if (!silent) setSummaryError("");
     try {
       const raw = await api.listOrdersForMonth(month);
       const rows = raw.map((parsed) => {
@@ -1043,10 +1072,12 @@ export default function LOiseauTraiteur() {
       setSummaryRows(rows);
     } catch (e) {
         console.error("[L'Oiseau Traiteur] erreur:", e);
-      setSummaryError("Impossible de charger le résumé pour ce mois.");
-      setSummaryRows([]);
+      if (!silent) {
+        setSummaryError("Impossible de charger le résumé pour ce mois.");
+        setSummaryRows([]);
+      }
     }
-    setSummaryLoading(false);
+    if (!silent) setSummaryLoading(false);
   }
 
   function defaultManualDate(month) {
