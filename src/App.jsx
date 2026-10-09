@@ -285,6 +285,7 @@ export default function LOiseauTraiteur() {
   // résumé tab
   const [summaryMonth, setSummaryMonth] = useState(currentMonthISO());
   // Ajout manuel (commandes passées hors application) dans la facturation.
+  const [historyDate, setHistoryDate] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [manualDoctor, setManualDoctor] = useState("");
   const [manualDate, setManualDate] = useState("");
@@ -1034,6 +1035,7 @@ export default function LOiseauTraiteur() {
             name: it.name,
             price: Number(it.price) || 0,
             qty: Number(it.qty) || 1,
+            takeaway: Number(it.takeaway) || 0,
           }))
         );
         return { date: parsed.date, doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
@@ -1055,22 +1057,37 @@ export default function LOiseauTraiteur() {
     setManualDate(defaultManualDate(summaryMonth));
   }, [summaryMonth]);
 
-  function addManualLine() {
+  // Lit la ligne en cours de saisie : { line } si elle est valide, { error } sinon.
+  function parseManualDraft() {
     const name = manualDraft.name.trim();
     const price = parseFloat(String(manualDraft.price).replace(",", "."));
     const qty = parseInt(manualDraft.qty, 10);
-    if (!name) return setManualMsg("Indiquez le nom de l'article.");
-    if (!isFinite(price) || price < 0) return setManualMsg("Indiquez un prix valide.");
-    if (!qty || qty < 1) return setManualMsg("Indiquez une quantité valide.");
-    setManualLines((prev) => [...prev, { category: manualDraft.category, name, price, qty }]);
-    setManualDraft((d) => ({ ...d, name: "", price: "", qty: "1" }));
+    if (!name) return { error: "Indiquez le nom de l'article." };
+    if (!isFinite(price) || price < 0) return { error: "Indiquez un prix valide." };
+    if (!qty || qty < 1) return { error: "Indiquez une quantité valide." };
+    return { line: { category: manualDraft.category, name, price, qty } };
+  }
+  const NEXT_MANUAL_CATEGORY = { plat: "dessert", dessert: "boisson", boisson: "plat", entree: "plat" };
+  function addManualLine() {
+    const r = parseManualDraft();
+    if (r.error) return setManualMsg(r.error);
+    setManualLines((prev) => [...prev, r.line]);
+    // On enchaîne sur la catégorie suivante (plat → dessert → boisson).
+    setManualDraft({ category: NEXT_MANUAL_CATEGORY[r.line.category] || "plat", name: "", price: "", qty: "1" });
     setManualMsg("");
   }
 
   async function saveManualOrder() {
     if (!manualDoctor) return setManualMsg("Choisissez un médecin.");
     if (!manualDate || manualDate.slice(0, 7) !== summaryMonth) return setManualMsg("La date doit être dans le mois affiché.");
-    if (manualLines.length === 0) return setManualMsg("Ajoutez au moins un article.");
+    // Si une ligne est en cours de saisie (nom ou prix renseigné) sans avoir été ajoutée, on l'inclut.
+    const lines = [...manualLines];
+    if (manualDraft.name.trim() || String(manualDraft.price).trim()) {
+      const r = parseManualDraft();
+      if (r.error) return setManualMsg(r.error);
+      lines.push(r.line);
+    }
+    if (lines.length === 0) return setManualMsg("Ajoutez au moins un article.");
     setManualSaving(true);
     setManualMsg("");
     try {
@@ -1080,7 +1097,7 @@ export default function LOiseauTraiteur() {
       CATEGORIES.forEach((c) => {
         selections[c.key] = selArray(existing && existing.selections ? existing.selections[c.key] : null).map((it) => ({ ...it }));
       });
-      manualLines.forEach((l) => {
+      lines.forEach((l) => {
         const arr = selections[l.category];
         const same = arr.find((it) => it.name.trim().toLowerCase() === l.name.toLowerCase() && Number(it.price) === l.price);
         if (same) same.qty = (Number(same.qty) || 1) + l.qty;
@@ -1089,6 +1106,7 @@ export default function LOiseauTraiteur() {
       const total = computeTotal(selections);
       await withRetry(() => api.saveOrder(manualDate, manualDoctor, selections, total));
       setManualLines([]);
+      setManualDraft({ category: "plat", name: "", price: "", qty: "1" });
       setManualMsg(`Commande ajoutée pour ${manualDoctor} le ${formatDateLong(manualDate)}.`);
       await loadSummary(summaryMonth);
     } catch (e) {
@@ -1097,6 +1115,32 @@ export default function LOiseauTraiteur() {
     }
     setManualSaving(false);
   }
+
+  // Historique : jours du mois ayant des commandes (le plus récent d'abord) et détail du jour choisi.
+  const historyDates = useMemo(
+    () => Array.from(new Set(summaryRows.map((r) => r.date))).sort((a, b) => b.localeCompare(a)),
+    [summaryRows]
+  );
+  const historyShownDate = historyDates.includes(historyDate) ? historyDate : historyDates[0] || "";
+  const historyRows = useMemo(
+    () =>
+      summaryRows
+        .filter((r) => r.date === historyShownDate)
+        .sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")),
+    [summaryRows, historyShownDate]
+  );
+  const historyAggregated = useMemo(() => {
+    const map = {};
+    CATEGORIES.forEach((c) => (map[c.key] = new Map()));
+    historyRows.forEach((o) =>
+      o.items.forEach((it) => {
+        const prev = map[it.category].get(it.name) || { qty: 0, takeaway: 0 };
+        map[it.category].set(it.name, { qty: prev.qty + it.qty, takeaway: prev.takeaway + (it.takeaway || 0) });
+      })
+    );
+    return map;
+  }, [historyRows]);
+  const historyTotal = historyRows.reduce((sum, r) => sum + r.total, 0);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -2248,6 +2292,7 @@ export default function LOiseauTraiteur() {
                       placeholder="Prix €"
                       value={manualDraft.price}
                       onChange={(e) => setManualDraft({ ...manualDraft, price: e.target.value })}
+                      onKeyDown={(e) => e.key === "Enter" && addManualLine()}
                       style={{ width: 90 }}
                     />
                     <input
@@ -2265,6 +2310,8 @@ export default function LOiseauTraiteur() {
                   {manualLines.map((l, i) => (
                     <div key={i} className="lf-order-editor-line">
                       <span style={{ flex: 1, minWidth: 0 }}>
+                        <strong>{l.category === "entree" ? "Entrée" : l.category === "plat" ? "Plat" : l.category === "dessert" ? "Dessert" : "Boisson"}</strong>
+                        {" : "}
                         {l.qty > 1 ? `${l.qty} × ` : ""}
                         {l.name} — {formatEuro(l.price * l.qty)}
                       </span>
@@ -2282,7 +2329,7 @@ export default function LOiseauTraiteur() {
                     <span style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>
                       Si le médecin a déjà une commande ce jour-là, les articles y sont ajoutés.
                     </span>
-                    <button className="lf-btn lf-btn-primary" onClick={saveManualOrder} disabled={manualSaving || manualLines.length === 0}>
+                    <button className="lf-btn lf-btn-primary" onClick={saveManualOrder} disabled={manualSaving}>
                       {manualSaving ? <Loader2 className="lf-spin" size={14} /> : "Enregistrer"}
                     </button>
                   </div>
@@ -2350,6 +2397,60 @@ export default function LOiseauTraiteur() {
                 </table>
               )}
             </div>
+
+            {!summaryLoading && !summaryError && historyDates.length > 0 && (
+              <div className="lf-card">
+                <div className="lf-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+                  <span className="lf-label" style={{ margin: 0 }}>Historique des commandes</span>
+                  <div className="lf-ordersummary-total">{formatEuro(historyTotal)}</div>
+                </div>
+                <div className="lf-pills" style={{ marginBottom: 14 }}>
+                  {historyDates.map((d) => (
+                    <button
+                      key={d}
+                      className={`lf-pill ${historyShownDate === d ? "active" : ""}`}
+                      onClick={() => setHistoryDate(d)}
+                    >
+                      {formatDateShort(d)}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 10px" }}>{formatDateLong(historyShownDate)}</p>
+                <div style={{ marginBottom: 14 }}>
+                  {CATEGORIES.filter((c) => historyAggregated[c.key].size > 0).map((c) => (
+                    <div key={c.key} style={{ marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--pine-dark)", textTransform: "uppercase", letterSpacing: ".03em" }}>
+                        {c.label}
+                      </span>
+                      <div style={{ fontSize: 13.5, color: "var(--ink)", marginTop: 2 }}>
+                        {joinNodes(
+                          Array.from(historyAggregated[c.key].entries()).map(([name, { qty, takeaway }]) => (
+                            <span key={name}>
+                              {qty} × {name}
+                              {takeaway > 0 && <TakeawayNote n={takeaway} />}
+                            </span>
+                          )),
+                          " · "
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+                  {historyRows.map((o, i) => (
+                    <div key={i} className="lf-preview-item">
+                      <span className="lf-preview-date">{o.doctor}</span>
+                      <span className="lf-preview-cats">
+                        {describeItems(o.items)} — {formatEuro(o.total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10, marginBottom: 0 }}>
+                  {historyRows.length} commande{historyRows.length > 1 ? "s" : ""} ce jour-là.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
