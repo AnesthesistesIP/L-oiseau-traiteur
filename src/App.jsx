@@ -121,6 +121,28 @@ function yesterdayISO() {
   d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+// Heure de commande affichée discrètement (ex : "11h35").
+function formatOrderTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return `${d.getHours()}h${String(d.getMinutes()).padStart(2, "0")}`;
+}
+// Heure limite normale (11h, la veille du repas) : au-delà, la commande est tardive.
+const LATE_ORDER_HOUR = 11;
+function isLateOrder(dateISO) {
+  if (!dateISO) return false;
+  const [y, m, d] = dateISO.split("-").map(Number);
+  const cutoff = new Date(y, m - 1, d - 1, LATE_ORDER_HOUR, 0, 0);
+  return new Date() > cutoff;
+}
+// Commande tardive : tous les plats sont automatiquement marqués "à emporter" (carton).
+function applyLateTakeaway(selections, dateISO) {
+  if (!isLateOrder(dateISO)) return selections;
+  return {
+    ...selections,
+    plat: (selections.plat || []).map((it) => ({ ...it, takeaway: it.qty || 1 })),
+  };
+}
 function currentMonthISO() {
   return todayISO().slice(0, 7);
 }
@@ -516,7 +538,8 @@ export default function LOiseauTraiteur() {
 
   // Met à jour uniquement le brouillon local (affichage immédiat) — rien n'est envoyé tant que
   // le médecin n'a pas cliqué sur "Envoyer ma commande".
-  function updateDraftSelections(newSelections) {
+  function updateDraftSelections(rawSelections) {
+    const newSelections = applyLateTakeaway(rawSelections, selectedOrderDate);
     const total = computeTotal(newSelections);
     const hasAny = CATEGORIES.some((c) => (newSelections[c.key] || []).length > 0);
     setMyOrder(hasAny ? { selections: newSelections, total } : null);
@@ -581,7 +604,7 @@ export default function LOiseauTraiteur() {
   async function submitOrder() {
     if (!selectedDoctor || !selectedOrderDate) return;
     if (selectedOrderDate < todayISO()) return; // sécurité : le bouton est normalement déjà désactivé
-    const selections = (myOrder && myOrder.selections) || emptyCategories();
+    const selections = applyLateTakeaway((myOrder && myOrder.selections) || emptyCategories(), selectedOrderDate);
     const total = computeTotal(selections);
     const hasAny = CATEGORIES.some((c) => (selections[c.key] || []).length > 0);
     setOrderSubmitStatus("sending");
@@ -948,7 +971,7 @@ export default function LOiseauTraiteur() {
         );
         const selectionsArr = {};
         CATEGORIES.forEach((c) => (selectionsArr[c.key] = selArray(selections[c.key]).map((it) => ({ ...it }))));
-        return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0, selections: selectionsArr };
+        return { doctor: parsed.doctor, items, total: Number(parsed.total) || 0, selections: selectionsArr, ts: parsed.ts, manual: !!parsed.manual };
       });
       setDayOrders(rows.sort((a, b) => a.doctor.localeCompare(b.doctor, "fr")));
     } catch (e) {
@@ -1015,7 +1038,10 @@ export default function LOiseauTraiteur() {
         await withRetry(() => api.deleteOrder(ordersViewDate, editingDoctor));
       } else {
         const total = computeTotal(editDraft);
-        await withRetry(() => api.saveOrder(ordersViewDate, editingDoctor, editDraft, total));
+        const orig = dayOrders.find((r) => r.doctor === editingDoctor);
+        await withRetry(() =>
+          api.saveOrder(ordersViewDate, editingDoctor, editDraft, total, { ts: orig && orig.ts, manual: orig && orig.manual })
+        );
       }
       await loadDayOrders(ordersViewDate);
       closeOrderEditor();
@@ -1067,7 +1093,7 @@ export default function LOiseauTraiteur() {
             takeaway: Number(it.takeaway) || 0,
           }))
         );
-        return { date: parsed.date, doctor: parsed.doctor, items, total: Number(parsed.total) || 0 };
+        return { date: parsed.date, doctor: parsed.doctor, items, total: Number(parsed.total) || 0, ts: parsed.ts, manual: !!parsed.manual };
       });
       setSummaryRows(rows);
     } catch (e) {
@@ -1135,7 +1161,12 @@ export default function LOiseauTraiteur() {
         else arr.push({ id: genId(), name: l.name, price: l.price, qty: l.qty });
       });
       const total = computeTotal(selections);
-      await withRetry(() => api.saveOrder(manualDate, manualDoctor, selections, total));
+      await withRetry(() =>
+        api.saveOrder(manualDate, manualDoctor, selections, total, {
+          ts: existing ? existing.ts : undefined,
+          manual: existing ? !!existing.manual : true,
+        })
+      );
       setManualLines([]);
       setManualDraft({ category: "plat", name: "", price: "", qty: "1" });
       setManualMsg(`Commande ajoutée pour ${manualDoctor} le ${formatDateLong(manualDate)}.`);
@@ -1388,7 +1419,7 @@ export default function LOiseauTraiteur() {
                   e.stopPropagation();
                   updateItemTakeaway(cat.key, dish.id, (entry.takeaway || 0) - 1);
                 }}
-                disabled={(entry.takeaway || 0) <= 0}
+                disabled={(entry.takeaway || 0) <= 0 || isLateOrder(selectedOrderDate)}
                 aria-label="Retirer un exemplaire à emporter"
               >
                 −
@@ -1618,7 +1649,8 @@ export default function LOiseauTraiteur() {
         .lf-order-editor-btn { padding: 4px 10px; min-width: 0; }
         .lf-preview-item { padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
         .lf-preview-item:last-child { border-bottom: none; }
-        .lf-preview-date { font-weight: 600; display: block; margin-bottom: 3px; }
+        .lf-preview-date { font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+        .lf-order-time { font-weight: 400; font-size: 11.5px; color: var(--ink-soft); opacity: .8; white-space: nowrap; }
         .lf-preview-cats { color: var(--ink-soft); font-size: 12.5px; }
 
         table.lf-table { width: 100%; border-collapse: collapse; }
@@ -1960,7 +1992,10 @@ export default function LOiseauTraiteur() {
                             onPointerUp={() => onRowPointerEnd(o)}
                             onPointerCancel={() => onRowPointerEnd(o)}
                           >
-                            <span className="lf-preview-date">{o.doctor}</span>
+                            <span className="lf-preview-date">
+                        {o.doctor}
+                        {o.ts && !o.manual && <span className="lf-order-time">commandé à {formatOrderTime(o.ts)}</span>}
+                      </span>
                             <span className="lf-preview-cats">
                               {describeItems(o.items)} — {formatEuro(o.total)}
                             </span>
@@ -2470,7 +2505,10 @@ export default function LOiseauTraiteur() {
                 <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
                   {historyRows.map((o, i) => (
                     <div key={i} className="lf-preview-item">
-                      <span className="lf-preview-date">{o.doctor}</span>
+                      <span className="lf-preview-date">
+                        {o.doctor}
+                        {o.ts && !o.manual && <span className="lf-order-time">commandé à {formatOrderTime(o.ts)}</span>}
+                      </span>
                       <span className="lf-preview-cats">
                         {describeItems(o.items)} — {formatEuro(o.total)}
                       </span>

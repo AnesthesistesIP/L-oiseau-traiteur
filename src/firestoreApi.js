@@ -50,13 +50,16 @@ export async function getOrder(date, doctor) {
   const snap = await getDoc(doc(db, "orders", orderDocId(date, doctor)));
   return snap.exists() ? snap.data() : null;
 }
-export async function saveOrder(date, doctor, selections, total) {
+// opts.ts : conserve l'heure d'origine d'une commande corrigée ; opts.manual : commande ajoutée
+// par le traiteur hors application (pas d'heure de commande à afficher).
+export async function saveOrder(date, doctor, selections, total, opts = {}) {
   await setDoc(doc(db, "orders", orderDocId(date, doctor)), {
     date,
     doctor,
     selections,
     total,
-    ts: Date.now(),
+    ts: opts.ts || Date.now(),
+    ...(opts.manual ? { manual: true } : {}),
   });
 }
 export async function deleteOrder(date, doctor) {
