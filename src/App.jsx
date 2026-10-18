@@ -132,7 +132,9 @@ const LATE_ORDER_HOUR = 11;
 function isLateOrder(dateISO) {
   if (!dateISO) return false;
   const [y, m, d] = dateISO.split("-").map(Number);
-  const cutoff = new Date(y, m - 1, d - 1, LATE_ORDER_HOUR, 0, 0);
+  // Repas du lundi : le dimanche n'a pas d'heure limite (jamais tardif ce jour-là).
+  const isMonday = new Date(y, m - 1, d).getDay() === 1;
+  const cutoff = isMonday ? new Date(y, m - 1, d, 0, 0, 0) : new Date(y, m - 1, d - 1, LATE_ORDER_HOUR, 0, 0);
   return new Date() > cutoff;
 }
 // Commande tardive : tous les plats sont automatiquement marqués "à emporter" (carton).
