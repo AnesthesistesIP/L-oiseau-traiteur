@@ -1645,6 +1645,13 @@ export default function LOiseauTraiteur() {
         table.lf-table { width: 100%; border-collapse: collapse; }
         .lf-table th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); padding: 8px 10px; border-bottom: 1px solid var(--line); }
         .lf-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+        @media (max-width: 560px) {
+          .lf-table th { font-size: 9.5px; letter-spacing: 0; padding: 6px 3px; }
+          .lf-table td { font-size: 12.5px; padding: 9px 3px; }
+          .lf-table th:first-child, .lf-table td:first-child { padding-left: 0; }
+          .lf-table th:last-child, .lf-table td:last-child { padding-right: 0; text-align: right; white-space: nowrap; }
+          .lf-table .lf-mono { font-size: 12px; }
+        }
         .lf-table tr.lf-total-row td { font-weight: 700; border-bottom: none; border-top: 2px solid var(--ink); }
         .lf-doctor-row { cursor: pointer; }
         .lf-doctor-row:hover { background: var(--paper); }
@@ -2407,7 +2414,7 @@ export default function LOiseauTraiteur() {
                   <thead>
                     <tr>
                       <th>Médecin</th>
-                      <th>Entrées</th>
+                      {grandCounts.entree > 0 && <th>Entrées</th>}
                       <th>Plats</th>
                       <th>Desserts</th>
                       <th>Boissons</th>
@@ -2418,7 +2425,7 @@ export default function LOiseauTraiteur() {
                     {grouped.map((g) => (
                       <tr key={g.doctor}>
                         <td>{g.doctor}</td>
-                        <td className="lf-mono">{g.counts.entree || 0}</td>
+                        {grandCounts.entree > 0 && <td className="lf-mono">{g.counts.entree || 0}</td>}
                         <td className="lf-mono">{g.counts.plat || 0}</td>
                         <td className="lf-mono">{g.counts.dessert || 0}</td>
                         <td className="lf-mono">{g.counts.boisson || 0}</td>
@@ -2427,7 +2434,7 @@ export default function LOiseauTraiteur() {
                     ))}
                     <tr className="lf-total-row">
                       <td>Total</td>
-                      <td className="lf-mono">{grandCounts.entree}</td>
+                      {grandCounts.entree > 0 && <td className="lf-mono">{grandCounts.entree}</td>}
                       <td className="lf-mono">{grandCounts.plat}</td>
                       <td className="lf-mono">{grandCounts.dessert}</td>
                       <td className="lf-mono">{grandCounts.boisson}</td>
