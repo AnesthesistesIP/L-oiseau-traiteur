@@ -66,8 +66,6 @@ const PLAT_SUBCATS = [
 function platSubcat(key) {
   return PLAT_SUBCATS.find((s) => s.key === key);
 }
-// Remise commerciale accordée par le traiteur, par personne, sur la facture du mois.
-const REMISE_COMMERCIALE_MENSUELLE = 5;
 const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/HG9uVk6norS4wlPfBhRBL5?s=cl&p=i&mlu=0&ilr=4";
 const APP_URL = "https://l-oiseau-traiteur.vercel.app";
 function categoryLabel(key) {
@@ -1222,10 +1220,6 @@ export default function LOiseauTraiteur() {
   }, [summaryRows]);
 
   const grandTotal = useMemo(() => grouped.reduce((s, g) => s + g.total, 0), [grouped]);
-  // La remise fidélité n'apparaît qu'une fois le mois terminé — sinon, visible dès le premier
-  // jour du mois en cours, elle donne l'impression (trompeuse) d'être appliquée quotidiennement.
-  const remiseApplicable = summaryMonth < currentMonthISO();
-  const remisePerPerson = remiseApplicable ? REMISE_COMMERCIALE_MENSUELLE : 0;
   const grandCounts = useMemo(() => {
     const totals = { entree: 0, plat: 0, dessert: 0, boisson: 0 };
     grouped.forEach((g) => CATEGORIES.forEach((c) => (totals[c.key] += g.counts[c.key] || 0)));
@@ -1251,20 +1245,19 @@ export default function LOiseauTraiteur() {
 
   function exportCSV() {
     const lines = [];
-    lines.push("Médecin;Entrées;Plats;Desserts;Boissons;Total (EUR);Remise fidélité (EUR);Net à payer (EUR)");
+    lines.push("Médecin;Entrées;Plats;Desserts;Boissons;Total (EUR)");
     const fmt = (n) => n.toFixed(2).replace(".", ",");
     grouped.forEach((g) =>
       lines.push(
         `${escapeCsv(g.doctor)};${g.counts.entree};${g.counts.plat};${g.counts.dessert};${g.counts.boisson};${fmt(
           g.total
-        )};${remiseApplicable ? "-" + fmt(remisePerPerson) : fmt(0)};${fmt(g.total - remisePerPerson)}`
+        )}`
       )
     );
-    const remiseTotal = remisePerPerson * grouped.length;
     lines.push(
       `TOTAL;${grandCounts.entree};${grandCounts.plat};${grandCounts.dessert};${grandCounts.boisson};${fmt(
         grandTotal
-      )};${remiseApplicable ? "-" + fmt(remiseTotal) : fmt(0)};${fmt(grandTotal - remiseTotal)}`
+      )}`
     );
     const csv = "\uFEFF" + lines.join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1280,8 +1273,6 @@ export default function LOiseauTraiteur() {
 
   function exportPDF() {
     const doc = new jsPDF();
-    const remiseTotal = remisePerPerson * grouped.length;
-    const remiseLabel = (n) => (remiseApplicable ? `-${formatEuro(n)}` : formatEuro(0));
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
@@ -1292,7 +1283,7 @@ export default function LOiseauTraiteur() {
 
     autoTable(doc, {
       startY: 32,
-      head: [["Médecin", "Entrées", "Plats", "Desserts", "Boissons", "Total", "Remise fidélité", "Net à payer"]],
+      head: [["Médecin", "Entrées", "Plats", "Desserts", "Boissons", "Total"]],
       body: [
         ...grouped.map((g) => [
           g.doctor,
@@ -1301,8 +1292,6 @@ export default function LOiseauTraiteur() {
           String(g.counts.dessert || 0),
           String(g.counts.boisson || 0),
           formatEuro(g.total),
-          remiseLabel(remisePerPerson),
-          formatEuro(g.total - remisePerPerson),
         ]),
         [
           "Total",
@@ -1311,8 +1300,6 @@ export default function LOiseauTraiteur() {
           String(grandCounts.dessert),
           String(grandCounts.boisson),
           formatEuro(grandTotal),
-          remiseLabel(remiseTotal),
-          formatEuro(grandTotal - remiseTotal),
         ],
       ],
       headStyles: { fillColor: [46, 92, 82] }, // vert pin de la charte
@@ -2298,11 +2285,6 @@ export default function LOiseauTraiteur() {
                   <Download size={14} /> Export PDF
                 </button>
               </div>
-              {!remiseApplicable && summaryRows.length > 0 && (
-                <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10, marginBottom: 0 }}>
-                  Mois en cours : la remise fidélité n'apparaît qu'une fois le mois terminé.
-                </p>
-              )}
             </div>
 
             <div className="lf-card">
@@ -2430,8 +2412,6 @@ export default function LOiseauTraiteur() {
                       <th>Desserts</th>
                       <th>Boissons</th>
                       <th>Total</th>
-                      <th>Remise fidélité</th>
-                      <th>Net à payer</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2443,10 +2423,6 @@ export default function LOiseauTraiteur() {
                         <td className="lf-mono">{g.counts.dessert || 0}</td>
                         <td className="lf-mono">{g.counts.boisson || 0}</td>
                         <td className="lf-mono">{formatEuro(g.total)}</td>
-                        <td className="lf-mono" style={{ color: remiseApplicable ? "var(--coral)" : "var(--ink-soft)" }}>
-                          {remiseApplicable ? `-${formatEuro(remisePerPerson)}` : "—"}
-                        </td>
-                        <td className="lf-mono">{formatEuro(g.total - remisePerPerson)}</td>
                       </tr>
                     ))}
                     <tr className="lf-total-row">
@@ -2456,10 +2432,6 @@ export default function LOiseauTraiteur() {
                       <td className="lf-mono">{grandCounts.dessert}</td>
                       <td className="lf-mono">{grandCounts.boisson}</td>
                       <td className="lf-mono">{formatEuro(grandTotal)}</td>
-                      <td className="lf-mono" style={{ color: remiseApplicable ? "var(--coral)" : "var(--ink-soft)" }}>
-                        {remiseApplicable ? `-${formatEuro(remisePerPerson * grouped.length)}` : "—"}
-                      </td>
-                      <td className="lf-mono">{formatEuro(grandTotal - remisePerPerson * grouped.length)}</td>
                     </tr>
                   </tbody>
                 </table>
